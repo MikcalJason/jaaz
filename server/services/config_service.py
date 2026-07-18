@@ -39,6 +39,15 @@ DEFAULT_PROVIDERS_CONFIG: AppConfig = {
         'api_key': '',
         'max_tokens': 8192,
     },
+    'volces': {
+        'models': {
+            'doubao-seedream-3-0-t2i-250415': {'type': 'image'},
+            'doubao-seededit-3-0-250415': {'type': 'image'},
+            'doubao-seedream-5-0-pro-260628': {'type': 'image'},
+        },
+        'url': 'https://ark.cn-beijing.volces.com/api/v3',
+        'api_key': '',
+    },
     'comfyui': {
         'models': {},
         'url': 'http://127.0.0.1:8188',

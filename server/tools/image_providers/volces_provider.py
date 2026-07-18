@@ -160,7 +160,9 @@ class VolcesProvider(ImageProviderBase):
                     model=model,
                     prompt=prompt,
                     size=kwargs.get("size", f"{width}x{height}"),
-                    extra_body={"watermark": False},
+                    extra_body={
+                        "watermark": kwargs.get("watermark", False),
+                    },
                 )
 
             return await self._process_response(result, "Volces")

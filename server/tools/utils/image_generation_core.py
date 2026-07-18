@@ -39,6 +39,7 @@ async def generate_image_with_provider(
     prompt: str,
     aspect_ratio: str = "1:1",
     input_images: Optional[list[str]] = None,
+    **kwargs,
 ) -> str:
     """
     通用图像生成函数，支持不同的模型和提供商
@@ -87,6 +88,7 @@ async def generate_image_with_provider(
         aspect_ratio=aspect_ratio,
         input_images=processed_input_images,
         metadata=metadata,
+        **kwargs,
     )
 
     # Save image to canvas
