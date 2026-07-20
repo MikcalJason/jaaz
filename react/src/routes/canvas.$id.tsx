@@ -2,6 +2,7 @@ import { getCanvas, renameCanvas } from '@/api/canvas'
 import CanvasExcali from '@/components/canvas/CanvasExcali'
 import CanvasHeader from '@/components/canvas/CanvasHeader'
 import CanvasMenu from '@/components/canvas/menu'
+import CanvasContextMenu from '@/components/canvas/pop-bar/CanvasContextMenu'
 import CanvasPopbarWrapper from '@/components/canvas/pop-bar'
 // VideoCanvasOverlay removed - using native Excalidraw embeddable elements instead
 import ChatInterface from '@/components/chat/Chat'
@@ -92,6 +93,7 @@ function Canvas() {
                   <CanvasExcali canvasId={id} initialData={canvas?.data} />
                   <CanvasMenu />
                   <CanvasPopbarWrapper />
+                  <CanvasContextMenu />
                 </div>
               )}
             </div>

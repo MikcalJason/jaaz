@@ -102,7 +102,7 @@ class JaazImageProvider(ImageProviderBase):
             print(f'🦄 Error searching cloud task: {e}')
             return None
 
-    async def _wait_for_task_completion(self, prompt: str, max_wait_time: int = 300) -> Optional[Dict[str, Any]]:
+    async def _wait_for_task_completion(self, prompt: str, max_wait_time: int = 600) -> Optional[Dict[str, Any]]:
         """
         Wait for cloud task to complete
 

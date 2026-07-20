@@ -43,7 +43,7 @@ const CanvasExcali: React.FC<CanvasExcaliProps> = ({
   canvasId,
   initialData,
 }) => {
-  const { excalidrawAPI, setExcalidrawAPI } = useCanvas()
+  const { excalidrawAPI, setExcalidrawAPI, setCanvasId } = useCanvas()
 
   const { i18n } = useTranslation()
 
@@ -135,6 +135,11 @@ const CanvasExcali: React.FC<CanvasExcaliProps> = ({
   // 这样可以确保颜色在深色模式下正确显示
   const customTheme = theme === 'dark' ? 'light' : theme
   
+  // Set canvasId in store so child components can access it
+  useEffect(() => {
+    setCanvasId(canvasId)
+  }, [canvasId, setCanvasId])
+
   // 在组件挂载和主题变化时设置深色模式下的背景色
   useEffect(() => {
     if (excalidrawAPI && theme === 'dark') {

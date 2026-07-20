@@ -1,6 +1,7 @@
 import { Separator } from '@/components/ui/separator'
 import { useCanvas } from '@/contexts/canvas'
 import { useState } from 'react'
+import CanvasBatchImageButton from './CanvasBatchImageButton'
 import CanvasMenuButton from './CanvasMenuButton'
 import { ToolType } from './CanvasMenuIcon'
 
@@ -49,6 +50,8 @@ const CanvasToolMenu = () => {
           />
         )
       )}
+      <Separator orientation="vertical" className="h-6! bg-primary/5" />
+      <CanvasBatchImageButton />
     </div>
   )
 }

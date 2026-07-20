@@ -126,6 +126,16 @@ class DatabaseService:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
+    async def get_session_title(self, session_id: str) -> str:
+        """Get session title by session id"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "SELECT title FROM chat_sessions WHERE id = ?",
+                (session_id,)
+            )
+            row = await cursor.fetchone()
+            return row[0] if row and row[0] else "untitled"
+
     async def save_canvas_data(self, id: str, data: str, thumbnail: str = None):
         """Save canvas data"""
         async with aiosqlite.connect(self.db_path) as db:
@@ -164,9 +174,14 @@ class DatabaseService:
             await db.commit()
 
     async def rename_canvas(self, id: str, name: str):
-        """Rename canvas"""
+        """Rename canvas — also syncs the session title for file naming"""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("UPDATE canvases SET name = ? WHERE id = ?", (name, id))
+            # Sync session titles so image files are named after the current canvas title
+            await db.execute(
+                "UPDATE chat_sessions SET title = ? WHERE canvas_id = ?",
+                (name, id),
+            )
             await db.commit()
 
     async def create_comfy_workflow(self, name: str, api_json: str, description: str, inputs: str, outputs: str = None):

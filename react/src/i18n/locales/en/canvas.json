@@ -5,6 +5,8 @@
   "share": "Share Canvas",
   "export": "Export Canvas",
   "exportImages": "Export",
+  "compositeExport": "Composite",
+  "exportPDF": "PDF",
   "import": "Import Canvas",
   "untitled": "Untitled",
   "back": "Back",
@@ -22,6 +24,16 @@
     "nothingSelected": "No assets selected",
     "exportingAssets": "Exporting assets...",
     "failedToExportImages": "Failed to export images",
+    "compositing": "Creating composite image...",
+    "compositeSuccess": "Composite image exported",
+    "compositeFailed": "Failed to create composite image",
+    "compositeNeedImage": "Please select an image to use as the base layer",
+    "compositeNoImageData": "Image data not found",
+    "exportingPDF": "Creating PDF...",
+    "exportingPDFProgress": "Creating PDF {{current}}/{{total}}...",
+    "exportPDFSuccess": "PDF exported",
+    "exportPDFFailed": "Failed to export PDF",
+    "noImagesToExport": "No images found on canvas",
     "gptImagePermissionRequired": "You must enable gpt-image-1 model permissions to use this feature!"
   },
   "deleteDialog": {
@@ -40,11 +52,22 @@
     "shape": "Shape",
     "arrow": "Arrow",
     "line": "Line",
-    "zoomFit": "Zoom to fit"
+    "zoomFit": "Zoom to fit",
+    "freedraw": "Pencil",
+    "batchImport": "Import multiple images",
+    "batchImportSuccess": "Successfully imported {{count}} image(s)",
+    "batchImportPartial": "Imported {{success}} image(s), {{fail}} failed",
+    "batchImportFailed": "Failed to import images"
   },
   "popbar": {
     "addToChat": "Add to chat",
-    "magicGenerate": "✨ Magic Generate"
+    "magicGenerate": "✨ Magic Generate",
+    "inpaint": "Clear Text",
+    "inpaintSuccess": "Text cleared ✅",
+    "inpaintFailed": "Clear text failed",
+    "inpaintNoImage": "Please select an image",
+    "inpaintNoMask": "Please draw on the text area with pencil",
+    "inpaintNoImageData": "Image data not found"
   },
   "myAssets": "My Assets",
   "selectAFolder": "Select a folder",

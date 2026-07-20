@@ -1,3 +1,6 @@
+// Extend Excalidraw FONT_FAMILY before any component mounts
+import '@/lib/fonts'
+
 import { SocketProvider } from '@/contexts/socket'
 import { StrictMode } from 'react'
 import ReactDOM from 'react-dom/client'

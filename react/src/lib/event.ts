@@ -16,6 +16,12 @@ export type TCanvasMagicGenerateEvent = {
   timestamp: string
 }
 
+export type TCanvasInpaintRegionEvent = {
+  imageElementId: string
+  imageFileId: string
+  freedrawElementIds: string[]
+}
+
 export type TMaterialAddImagesToChatEvent = {
   filePath: string
   fileName: string
@@ -45,6 +51,7 @@ export type TEvents = {
   // ********** Canvas events - Start **********
   'Canvas::AddImagesToChat': TCanvasAddImagesToChatEvent
   'Canvas::MagicGenerate': TCanvasMagicGenerateEvent
+  'Canvas::InpaintRegion': TCanvasInpaintRegionEvent
   // ********** Canvas events - End **********
 
   // ********** Material events - Start **********

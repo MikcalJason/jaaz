@@ -4,7 +4,9 @@ from typing import Dict
 
 sio = socketio.AsyncServer(
     cors_allowed_origins="*",
-    async_mode='asgi'
+    async_mode='asgi',
+    ping_timeout=120,    # 2 min — don't disconnect while backend is busy generating
+    ping_interval=25,    # 25 sec — default, matches client side
 )
 
 active_connections: Dict[str, dict] = {}

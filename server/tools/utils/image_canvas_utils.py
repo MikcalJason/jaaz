@@ -4,6 +4,8 @@ Handles canvas operations, locking, and notifications
 """
 
 import asyncio
+import base64
+import os
 import random
 import time
 import json
@@ -13,6 +15,7 @@ from nanoid import generate
 from services.db_service import db_service
 from services.websocket_service import broadcast_session_update
 from services.websocket_service import send_to_websocket
+from services.config_service import FILES_DIR
 from utils.canvas import find_next_best_element_position
 
 def generate_file_id() -> str:
@@ -110,10 +113,22 @@ async def save_image_to_canvas(session_id: str, canvas_id: str, filename: str, m
         file_id = generate_file_id()
         url = f'/api/file/{filename}'
 
+        # Read image file and convert to base64 for reliable canvas rendering
+        image_path = os.path.join(FILES_DIR, filename)
+        base64_data_url = url  # fallback to URL path
+        try:
+            with open(image_path, 'rb') as f:
+                image_bytes = f.read()
+            b64 = base64.b64encode(image_bytes).decode('utf-8')
+            base64_data_url = f'data:{mime_type};base64,{b64}'
+            print(f'✅ Image converted to base64 for canvas: {len(b64)} chars')
+        except Exception as e:
+            print(f'⚠️ Failed to read image for base64 conversion: {e}')
+
         file_data: Dict[str, Any] = {
             'mimeType': mime_type,
             'id': file_id,
-            'dataURL': url,
+            'dataURL': base64_data_url,
             'created': int(time.time() * 1000),
         }
 

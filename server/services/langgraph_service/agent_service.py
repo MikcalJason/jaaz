@@ -158,7 +158,7 @@ def _create_text_model(text_model: ModelInfo) -> Any:
         return ChatOpenAI(
             model=model,
             api_key=api_key,  # type: ignore
-            timeout=300,
+            timeout=600,
             base_url=url,
             temperature=0,
             # max_tokens=max_tokens, # TODO: 暂时注释掉有问题的参数

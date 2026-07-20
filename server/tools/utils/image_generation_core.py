@@ -3,6 +3,9 @@ Image generation core module
 Contains the main orchestration logic for image generation across different providers
 """
 
+import os
+import re
+from datetime import datetime
 from typing import Optional, Dict, Any
 from common import DEFAULT_PORT
 from tools.utils.image_utils import process_input_image
@@ -19,7 +22,8 @@ from ..image_providers.wavespeed_provider import WavespeedProvider
 from .image_canvas_utils import (
     save_image_to_canvas,
 )
-import time
+from services.config_service import FILES_DIR
+from services.db_service import db_service
 
 IMAGE_PROVIDERS: dict[str, ImageProviderBase] = {
     "jaaz": JaazImageProvider(),
@@ -28,6 +32,59 @@ IMAGE_PROVIDERS: dict[str, ImageProviderBase] = {
     "volces": VolcesProvider(),
     "wavespeed": WavespeedProvider(),
 }
+
+
+def _sanitize_filename(name: str) -> str:
+    """Sanitize a string for use in filenames: replace non-alphanumeric chars with underscore"""
+    safe = re.sub(r'[^\w一-鿿]', '_', name)
+    # collapse multiple underscores
+    safe = re.sub(r'_+', '_', safe).strip('_')
+    return safe if safe else 'untitled'
+
+
+async def _rename_to_structured(session_id: str, old_filename: str) -> str:
+    """Rename the generated image file to structured naming convention"""
+    ext = os.path.splitext(old_filename)[1] or '.png'
+    date_str = datetime.now().strftime('%Y%m%d')
+
+    # Get session title
+    try:
+        title = await db_service.get_session_title(session_id)
+    except Exception:
+        title = 'untitled'
+    safe_title = _sanitize_filename(title)
+
+    # Determine sequence number by scanning existing files
+    prefix = f'{date_str}_{safe_title}_'
+    seq = 1
+    if os.path.isdir(FILES_DIR):
+        existing = [f for f in os.listdir(FILES_DIR) if f.startswith(prefix)]
+        if existing:
+            nums = []
+            for f in existing:
+                match = re.match(r'.*_(\d{4})\.', f)
+                if match:
+                    nums.append(int(match.group(1)))
+            if nums:
+                seq = max(nums) + 1
+
+    new_filename = f'{prefix}{seq:04d}{ext}'
+
+    # Rename file on disk
+    old_path = os.path.join(FILES_DIR, old_filename)
+    new_path = os.path.join(FILES_DIR, new_filename)
+    if not os.path.exists(old_path):
+        print(f'⚠️ Source file not found for rename: {old_path}, keeping original name')
+        return old_filename
+
+    try:
+        os.rename(old_path, new_path)
+        print(f'📝 Renamed: {old_filename} → {new_filename}')
+    except OSError as e:
+        print(f'⚠️ Rename failed: {e}, keeping original name')
+        return old_filename
+
+    return new_filename
 
 
 async def generate_image_with_provider(
@@ -90,6 +147,9 @@ async def generate_image_with_provider(
         metadata=metadata,
         **kwargs,
     )
+
+    # Rename to structured filename: yyyyMMdd_title_seq.ext
+    filename = await _rename_to_structured(session_id, filename)
 
     # Save image to canvas
     image_url = await save_image_to_canvas(

@@ -34,6 +34,11 @@ export class SocketIOManager {
         reconnection: true,
         reconnectionAttempts: this.maxReconnectAttempts,
         reconnectionDelay: this.reconnectDelay,
+        // Increase timeouts to survive backend blocking during image generation
+        // Default pingTimeout is 20000ms — not enough when the server is busy
+        pingTimeout: 120000,    // 2 min — wait longer for pong during generation
+        pingInterval: 15000,    // 15 sec — ping more frequently to detect real drops
+        connectTimeout: 30000,  // 30 sec — generous initial connection timeout
       })
 
       this.socket.on('connect', () => {

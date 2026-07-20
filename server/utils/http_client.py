@@ -52,7 +52,7 @@ class HttpClient:
 
         config = {
             'verify': cls._get_ssl_context(),
-            'timeout': 300,
+            'timeout': 600,
             'follow_redirects': True,
             'limits': httpx.Limits(
                 max_keepalive_connections=0, max_connections=200, keepalive_expiry=30
@@ -74,7 +74,7 @@ class HttpClient:
                 limit_per_host=50,
                 keepalive_timeout=0,
             ),
-            'timeout': aiohttp.ClientTimeout(total=300),
+            'timeout': aiohttp.ClientTimeout(total=600),
             'trust_env': trust_env,  # 启用环境变量代理支持
             **kwargs,
         }

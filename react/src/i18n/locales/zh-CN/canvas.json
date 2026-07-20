@@ -5,6 +5,8 @@
   "share": "分享画布",
   "export": "导出画布",
   "exportImages": "导出",
+  "compositeExport": "合成",
+  "exportPDF": "PDF",
   "import": "导入画布",
   "untitled": "未命名",
   "back": "返回",
@@ -22,6 +24,16 @@
     "nothingSelected": "未选择任何素材",
     "exportingAssets": "导出素材中...",
     "failedToExportImages": "导出图片失败",
+    "compositing": "创建合成图片中...",
+    "compositeSuccess": "合成图片已导出",
+    "compositeFailed": "合成图片失败",
+    "compositeNeedImage": "请选择一张图片作为底图",
+    "compositeNoImageData": "未找到图片数据",
+    "exportingPDF": "创建 PDF 中...",
+    "exportingPDFProgress": "创建 PDF {{current}}/{{total}}...",
+    "exportPDFSuccess": "PDF 已导出",
+    "exportPDFFailed": "导出 PDF 失败",
+    "noImagesToExport": "画布上没有图片",
     "gptImagePermissionRequired": "您必须启用 gpt-image-1 模型权限才能使用此功能！"
   },
   "deleteDialog": {
@@ -40,11 +52,22 @@
     "shape": "形状",
     "arrow": "箭头",
     "line": "直线",
-    "zoomFit": "缩放适应"
+    "zoomFit": "缩放适应",
+    "freedraw": "画笔",
+    "batchImport": "批量导入图片",
+    "batchImportSuccess": "成功导入 {{count}} 张图片",
+    "batchImportPartial": "成功导入 {{success}} 张，{{fail}} 张失败",
+    "batchImportFailed": "导入图片失败"
   },
   "popbar": {
     "addToChat": "添加到聊天",
-    "magicGenerate": "✨ 魔法生成"
+    "magicGenerate": "✨ 魔法生成",
+    "inpaint": "清除文字",
+    "inpaintSuccess": "文字已清除 ✅",
+    "inpaintFailed": "清除文字失败",
+    "inpaintNoImage": "请先选择一张图片",
+    "inpaintNoMask": "请用画笔涂抹要清除的文字区域",
+    "inpaintNoImageData": "未找到图片数据"
   },
   "myAssets": "我的素材",
   "selectAFolder": "选择文件夹",
