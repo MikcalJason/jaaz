@@ -1,7 +1,7 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/contexts/AuthContext'
-import { useConfigs, useRefreshModels } from '@/contexts/configs'
+import { useRefreshModels } from '@/contexts/configs'
 import { BASE_API_URL } from '@/constants'
 import { Button } from '@/components/ui/button'
 import {
@@ -18,7 +18,6 @@ import { PointsDisplay } from './PointsDisplay'
 
 export function UserMenu() {
   const { authStatus, refreshAuth } = useAuth()
-  const { setShowLoginDialog } = useConfigs()
   const refreshModels = useRefreshModels()
   const { t } = useTranslation()
 
@@ -71,10 +70,6 @@ export function UserMenu() {
     )
   }
 
-  // 未登录状态，显示登录按钮
-  return (
-    <Button variant="outline" onClick={() => setShowLoginDialog(true)}>
-      {t('common:auth.login')}
-    </Button>
-  )
+  // 未登录状态不显示登录入口
+  return null
 }

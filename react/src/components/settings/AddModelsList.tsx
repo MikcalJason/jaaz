@@ -2,6 +2,13 @@ import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Plus, Trash2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTrigger } from '../ui/dialog'
 
@@ -25,6 +32,7 @@ export default function AddModelsList({
 }: ModelsListProps) {
   const [modelItems, setModelItems] = useState<ModelItem[]>([])
   const [newModelName, setNewModelName] = useState('')
+  const [newModelType, setNewModelType] = useState<ModelItem['type']>('text')
   const [openAddModelDialog, setOpenAddModelDialog] = useState(false)
 
   useEffect(() => {
@@ -57,13 +65,22 @@ export default function AddModelsList({
     if (newModelName) {
       const newItems = [
         ...modelItems,
-        { name: newModelName, type: 'text' as const },
+        { name: newModelName, type: newModelType },
       ]
       setModelItems(newItems)
       notifyChange(newItems)
       setNewModelName('')
+      setNewModelType('text')
       setOpenAddModelDialog(false)
     }
+  }
+
+  const handleTypeChange = (index: number, type: ModelItem['type']) => {
+    const newItems = modelItems.map((model, i) =>
+      i === index ? { ...model, type } : model
+    )
+    setModelItems(newItems)
+    notifyChange(newItems)
   }
 
   const handleRemoveModel = (index: number) => {
@@ -98,6 +115,22 @@ export default function AddModelsList({
                 }}
                 onChange={(e) => setNewModelName(e.target.value)}
               />
+              <Label>Model Type</Label>
+              <Select
+                value={newModelType}
+                onValueChange={(value) =>
+                  setNewModelType(value as ModelItem['type'])
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="text">text</SelectItem>
+                  <SelectItem value="image">image</SelectItem>
+                  <SelectItem value="video">video</SelectItem>
+                </SelectContent>
+              </Select>
               <Button type="button" onClick={handleAddModel} className="w-full">
                 Add Model
               </Button>
@@ -111,7 +144,21 @@ export default function AddModelsList({
           <div key={index} className="flex items-center justify-between">
             <p className="w-[50%]">{model.name}</p>
             <div className="flex items-center gap-6">
-              <p>{model.type}</p>
+              <Select
+                value={model.type}
+                onValueChange={(value) =>
+                  handleTypeChange(index, value as ModelItem['type'])
+                }
+              >
+                <SelectTrigger size="sm" className="w-[110px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="text">text</SelectItem>
+                  <SelectItem value="image">image</SelectItem>
+                  <SelectItem value="video">video</SelectItem>
+                </SelectContent>
+              </Select>
               {modelItems.length > 1 && (
                 <Button
                   type="button"
