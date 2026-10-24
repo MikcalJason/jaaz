@@ -19,12 +19,14 @@ If `run_comfy_workflow` is not yet implemented it will still work
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import random
 import time
 import traceback
 from io import BytesIO
+import aiofiles
 from typing import Annotated, Any, Dict, List, Optional
 from common import DEFAULT_PORT
 from .utils.image_canvas_utils import (
@@ -143,8 +145,8 @@ def build_tool(wf: Dict[str, Any]) -> BaseTool:
                 image_path = os.path.join(FILES_DIR, filename)
                 if not os.path.exists(image_path):
                     continue
-                with open(image_path, "rb") as image_file:
-                    image_bytes = image_file.read()
+                async with aiofiles.open(image_path, "rb") as image_file:
+                    image_bytes = await image_file.read()
                 image_stream = BytesIO(image_bytes)
                 image_name = await upload_image(image_stream, api_url, filename)
                 required_data[key] = image_name
@@ -262,9 +264,8 @@ def build_tool(wf: Dict[str, Any]) -> BaseTool:
                     }
                 )
 
-            await db_service.save_canvas_data(
-                canvas_id, json.dumps(canvas_data["data"])
-            )
+            canvas_json = await asyncio.to_thread(json.dumps, canvas_data["data"])
+            await db_service.save_canvas_data(canvas_id, canvas_json)
 
             for file_info in generated_files_info:
                 if file_info["mime_type"].startswith("image"):

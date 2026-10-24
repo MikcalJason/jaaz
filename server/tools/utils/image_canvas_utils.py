@@ -11,6 +11,7 @@ import time
 import json
 from contextlib import asynccontextmanager
 from typing import Dict, List, Any, Optional, Union, cast
+import aiofiles
 from nanoid import generate
 from services.db_service import db_service
 from services.websocket_service import broadcast_session_update
@@ -113,13 +114,16 @@ async def save_image_to_canvas(session_id: str, canvas_id: str, filename: str, m
         file_id = generate_file_id()
         url = f'/api/file/{filename}'
 
-        # Read image file and convert to base64 for reliable canvas rendering
+        # Read image file asynchronously and convert to base64
+        # Offloaded to thread to avoid blocking the event loop
         image_path = os.path.join(FILES_DIR, filename)
         base64_data_url = url  # fallback to URL path
         try:
-            with open(image_path, 'rb') as f:
-                image_bytes = f.read()
-            b64 = base64.b64encode(image_bytes).decode('utf-8')
+            async with aiofiles.open(image_path, 'rb') as f:
+                image_bytes = await f.read()
+            b64 = await asyncio.to_thread(
+                lambda: base64.b64encode(image_bytes).decode('utf-8')
+            )
             base64_data_url = f'data:{mime_type};base64,{b64}'
             print(f'✅ Image converted to base64 for canvas: {len(b64)} chars')
         except Exception as e:
@@ -150,7 +154,9 @@ async def save_image_to_canvas(session_id: str, canvas_id: str, filename: str, m
         image_url = f"/api/file/{filename}"
 
         # Save the updated canvas data back to the database
-        await db_service.save_canvas_data(canvas_id, json.dumps(canvas_data))
+        # json.dumps is CPU-intensive for large canvas data — offload to thread
+        canvas_json = await asyncio.to_thread(json.dumps, canvas_data)
+        await db_service.save_canvas_data(canvas_id, canvas_json)
 
         # Broadcast image generation message to frontend
         await broadcast_session_update(session_id, canvas_id, {

@@ -149,6 +149,16 @@ export const getMediaFilesApi = async (path: string) => {
   return response.json()
 }
 
+export const getImagesRecursiveApi = async (path: string) => {
+  const response = await fetch(
+    `/api/get_images_recursive?path=${encodeURIComponent(path)}`
+  )
+  if (!response.ok) {
+    throw new Error('Failed to get images recursively')
+  }
+  return response.json()
+}
+
 export const openFolderInExplorer = async (path: string) => {
   const response = await fetch('/api/open_folder_in_explorer', {
     method: 'POST',

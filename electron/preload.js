@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Add new file picker methods
   pickImage: () => ipcRenderer.invoke('pick-image'),
   pickVideo: () => ipcRenderer.invoke('pick-video'),
+  pickDirectories: () => ipcRenderer.invoke('pick-directories'),
   // Add ComfyUI installation methods
   installComfyUI: () => ipcRenderer.invoke('install-comfyui'),
   uninstallComfyUI: () => ipcRenderer.invoke('uninstall-comfyui'),

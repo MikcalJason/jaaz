@@ -288,6 +288,42 @@ async def get_media_files(path: str):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/get_images_recursive")
+async def get_images_recursive(path: str):
+    """
+    递归获取指定目录及其子目录下的所有图片文件
+
+    Args:
+        path: 根目录路径
+
+    Returns:
+        图片文件路径列表（字符串数组）
+    """
+    try:
+        if not os.path.exists(path) or not os.path.isdir(path):
+            raise HTTPException(status_code=400, detail="Invalid directory path")
+
+        image_paths: List[str] = []
+
+        def walk(directory: str):
+            try:
+                for item in os.listdir(directory):
+                    item_path = os.path.join(directory, item)
+                    if os.path.isdir(item_path):
+                        walk(item_path)
+                    elif os.path.isfile(item_path) and get_file_type(item_path) == "image":
+                        image_paths.append(item_path)
+            except PermissionError:
+                pass
+
+        walk(path)
+        return image_paths
+
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/get_file_thumbnail")
 async def get_file_thumbnail(file_path: str):
     """

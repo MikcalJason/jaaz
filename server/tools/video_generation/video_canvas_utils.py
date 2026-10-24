@@ -108,7 +108,9 @@ async def save_video_to_canvas(
         canvas_data["data"]["files"][file_id] = file_data
 
         # Save updated canvas data
-        await db_service.save_canvas_data(canvas_id, json.dumps(canvas_data["data"]))
+        # Offload json.dumps to thread pool for large canvas data
+        canvas_json = await asyncio.to_thread(json.dumps, canvas_data["data"])
+        await db_service.save_canvas_data(canvas_id, canvas_json)
 
         return filename, file_data, new_video_element
 

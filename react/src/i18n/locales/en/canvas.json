@@ -55,6 +55,10 @@
     "zoomFit": "Zoom to fit",
     "freedraw": "Pencil",
     "batchImport": "Import multiple images",
+    "batchImportFolders": "Select folders",
+    "batchImportFiles": "Select files",
+    "batchImportNoImages": "No images found in selected folders",
+    "batchImportUnsupported": "Folder selection is not supported in this environment",
     "batchImportSuccess": "Successfully imported {{count}} image(s)",
     "batchImportPartial": "Imported {{success}} image(s), {{fail}} failed",
     "batchImportFailed": "Failed to import images"

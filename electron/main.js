@@ -327,6 +327,17 @@ ipcMain.handle('pick-video', async () => {
   return null
 })
 
+ipcMain.handle('pick-directories', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory', 'multiSelections'],
+  })
+
+  if (!result.canceled && result.filePaths.length > 0) {
+    return result.filePaths
+  }
+  return null
+})
+
 // Add IPC handlers for manual update check
 ipcMain.handle('check-for-updates', () => {
   if (app.isPackaged) {

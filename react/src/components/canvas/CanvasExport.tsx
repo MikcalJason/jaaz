@@ -19,6 +19,7 @@ type PDFQuality = { label: string; mime: string; quality?: number }
 
 const PDF_QUALITIES: PDFQuality[] = [
   { label: 'PNG', mime: 'image/png' },
+  { label: 'JPEG 1.0', mime: 'image/jpeg', quality: 1.0 },
   { label: 'JPEG 0.9', mime: 'image/jpeg', quality: 0.9 },
   { label: 'JPEG 0.85', mime: 'image/jpeg', quality: 0.85 },
 ]

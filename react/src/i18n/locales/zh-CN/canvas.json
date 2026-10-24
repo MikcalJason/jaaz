@@ -55,6 +55,10 @@
     "zoomFit": "缩放适应",
     "freedraw": "画笔",
     "batchImport": "批量导入图片",
+    "batchImportFolders": "选择文件夹",
+    "batchImportFiles": "选择文件",
+    "batchImportNoImages": "所选目录中未找到图片",
+    "batchImportUnsupported": "当前环境不支持选择文件夹",
     "batchImportSuccess": "成功导入 {{count}} 张图片",
     "batchImportPartial": "成功导入 {{success}} 张，{{fail}} 张失败",
     "batchImportFailed": "导入图片失败"
