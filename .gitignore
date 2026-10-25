@@ -21,3 +21,6 @@ user_data/
 .continue
 
 .env
+
+# IDE-generated module files
+.idea/gyp-next.iml
