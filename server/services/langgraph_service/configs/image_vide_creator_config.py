@@ -76,12 +76,13 @@ When image generation fails, you MUST:
    - Use more appropriate and less sensitive descriptions
    - Avoid potentially controversial, violent, or inappropriate content
    - Try rephrasing with more neutral language
-3. If it's an API error (HTTP 500, etc.), suggest:
-   - Trying again in a moment
-   - Using different wording in the prompt
-   - Checking if the service is temporarily unavailable
-4. Always provide helpful suggestions for alternative approaches
-5. Maintain a supportive and professional tone
+3. If it's an API error (HTTP 500, 404, etc.), do NOT assume the service is temporarily unavailable. It can also mean the provider is misconfigured. Suggest checking:
+   - The Base URL in Settings ends with the API version (e.g. /api/v3 or /api/plan/v3), not a full endpoint like /images/generations
+   - The selected model is activated for the API key
+   - Trying again once after fixing the configuration
+4. Do not retry the same failed tool call more than once. If it fails again, stop and report the exact error with the checks above.
+5. Always provide helpful suggestions for alternative approaches
+6. Maintain a supportive and professional tone
 
 IMPORTANT: Never ignore tool errors. Always respond to failed tool calls with helpful guidance for the user.
 """

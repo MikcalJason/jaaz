@@ -6,12 +6,23 @@ import { LLMConfig } from '@/types/types'
 import { useTranslation } from 'react-i18next'
 import AddModelsList from './AddModelsList'
 import { Trash2 } from 'lucide-react'
+import { useMemo } from 'react'
+import { ToolInfo } from '@/api/model'
+import { normalizeModelName } from '@/lib/utils'
+
+type ModelConfigEntry = {
+  type?: 'text' | 'image' | 'video'
+  is_disabled?: boolean
+}
+
+type UiModelConfig = ModelConfigEntry & { display_name?: string }
 
 interface CommonSettingProps {
   providerKey: string
   config: LLMConfig
   onConfigChange: (key: string, newConfig: LLMConfig) => void
   onDeleteProvider?: (providerKey: string) => void
+  toolCatalog?: ToolInfo[]
 }
 
 export default function CommonSetting({
@@ -19,8 +30,69 @@ export default function CommonSetting({
   config,
   onConfigChange,
   onDeleteProvider,
+  toolCatalog = [],
 }: CommonSettingProps) {
   const { t } = useTranslation()
+
+  // Only models that can actually show up in the home model selector are
+  // listed here: text models plus media models backed by a generation tool.
+  const { displayModels, hiddenModels, hiddenMediaCount } = useMemo(() => {
+    const providerTools = toolCatalog.filter(
+      (tool) => tool.provider === providerKey && tool.model
+    )
+    const toolByModel = new Map(
+      providerTools.map((tool) => [
+        normalizeModelName(tool.model as string),
+        tool,
+      ])
+    )
+    const configModels = config.models || {}
+
+    const displayModels: Record<string, UiModelConfig> = {}
+    const hiddenModels: Record<string, ModelConfigEntry> = {}
+
+    Object.entries(configModels).forEach(([name, modelConfig]) => {
+      const type = modelConfig.type || 'text'
+      if (type === 'text') {
+        displayModels[name] = {
+          type: 'text',
+          is_disabled: modelConfig.is_disabled ?? false,
+        }
+      }
+    })
+
+    // Media rows follow the tool catalog order so they match the home selector.
+    providerTools.forEach((tool) => {
+      if (!tool.model) return
+      const normalizedModel = normalizeModelName(tool.model)
+      const matchedEntry = Object.entries(configModels).find(
+        ([name, modelConfig]) =>
+          (modelConfig.type === 'image' || modelConfig.type === 'video') &&
+          normalizeModelName(name) === normalizedModel
+      )
+
+      displayModels[tool.model] = {
+        type: tool.type === 'video' ? 'video' : 'image',
+        is_disabled: matchedEntry?.[1].is_disabled ?? false,
+        display_name: tool.display_name || undefined,
+      }
+    })
+
+    // Media models without a generation tool cannot appear on the home page.
+    Object.entries(configModels).forEach(([name, modelConfig]) => {
+      if (modelConfig.type !== 'image' && modelConfig.type !== 'video') return
+      if (!toolByModel.has(normalizeModelName(name))) {
+        hiddenModels[name] = modelConfig
+      }
+    })
+
+    return {
+      displayModels,
+      hiddenModels,
+      hiddenMediaCount: Object.keys(hiddenModels).length,
+    }
+  }, [config.models, providerKey, toolCatalog])
+
   // jaaz is official provider, so we don't need to show it here
   if (providerKey === 'jaaz') {
     return null
@@ -44,12 +116,12 @@ export default function CommonSetting({
     })
   }
 
-  const handleModelsChange = (
-    models: Record<string, { type?: 'text' | 'image' | 'video' }>
-  ) => {
+  const handleModelsChange = (models: Record<string, ModelConfigEntry>) => {
     onConfigChange(providerKey, {
       ...config,
-      models,
+      // Keep media models without a generation tool so they are not dropped
+      // from the saved configuration.
+      models: { ...hiddenModels, ...models },
     })
   }
 
@@ -104,6 +176,9 @@ export default function CommonSetting({
           onChange={(e) => handleChange('url', e.target.value)}
           className="w-full"
         />
+        <p className="text-xs text-gray-500">
+          {t('settings:provider.apiUrlDescription')}
+        </p>
       </div>
 
       {/* API Key Input */}
@@ -127,11 +202,26 @@ export default function CommonSetting({
       {/* Models Configuration - only for custom providers */}
       {providerKey !== 'ollama' && (
         <div className="space-y-2">
-          <AddModelsList
-            models={config.models || {}}
-            onChange={handleModelsChange}
-            label={t('settings:models.title')}
-          />
+          {(config.api_key ?? '').trim() ? (
+            <>
+              <AddModelsList
+                models={displayModels}
+                onChange={handleModelsChange}
+                label={t('settings:models.title')}
+              />
+              {hiddenMediaCount > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {t('settings:models.hiddenUnsupported', {
+                    count: hiddenMediaCount,
+                  })}
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {t('settings:models.notConfigured')}
+            </p>
+          )}
         </div>
       )}
 

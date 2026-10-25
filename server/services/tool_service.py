@@ -1,3 +1,4 @@
+import re
 import traceback
 from typing import Dict
 from langchain_core.tools import BaseTool
@@ -116,18 +117,21 @@ TOOL_MAPPING: Dict[str, ToolInfo] = {
         "display_name": "Doubao Seedream 3 by volces",
         "type": "image",
         "provider": "volces",
+        "model": "doubao-seedream-3-0-t2i-250415",
         "tool_function": generate_image_by_doubao_seedream_3_volces,
     },
     "generate_image_by_doubao_seedream_5_0_pro_volces": {
         "display_name": "Doubao Seedream 5.0 Pro by volces",
         "type": "image",
         "provider": "volces",
+        "model": "doubao-seedream-5-0-pro-260628",
         "tool_function": generate_image_by_doubao_seedream_5_0_pro_volces,
     },
     "edit_image_by_doubao_seededit_3_volces": {
         "display_name": "Doubao Seededit 3 by volces",
         "type": "image",
         "provider": "volces",
+        "model": "doubao-seededit-3-0-250415",
         "tool_function": edit_image_by_doubao_seededit_3_volces,
     },
     "generate_video_by_seedance_v1_jaaz": {
@@ -152,18 +156,21 @@ TOOL_MAPPING: Dict[str, ToolInfo] = {
         "display_name": "Doubao Seedance v1 by volces",
         "type": "video",
         "provider": "volces",
+        "model": "doubao-seedance-1-0-pro-250528",
         "tool_function": generate_video_by_seedance_v1_pro_volces,
     },
     "generate_video_by_seedance_v1_lite_volces_t2v": {
         "display_name": "Doubao Seedance v1 lite(text-to-video)",
         "type": "video",
         "provider": "volces",
+        "model": "doubao-seedance-1-0-lite-t2v-250428",
         "tool_function": generate_video_by_seedance_v1_lite_t2v,
     },
     "generate_video_by_seedance_v1_lite_i2v_volces": {
         "display_name": "Doubao Seedance v1 lite(images-to-video)",
         "type": "video",
         "provider": "volces",
+        "model": "doubao-seedance-1-0-lite-i2v-250428",
         "tool_function": generate_video_by_seedance_v1_lite_i2v,
     },
     "generate_video_by_veo3_fast_jaaz": {
@@ -179,27 +186,51 @@ TOOL_MAPPING: Dict[str, ToolInfo] = {
         "display_name": "Imagen 4",
         "type": "image",
         "provider": "replicate",
+        "model": "google/imagen-4",
         "tool_function": generate_image_by_imagen_4_replicate,
     },
     "generate_image_by_recraft_v3_replicate": {
         "display_name": "Recraft v3",
         "type": "image",
         "provider": "replicate",
+        "model": "recraft-ai/recraft-v3",
         "tool_function": generate_image_by_recraft_v3_replicate,
     },
     "generate_image_by_flux_kontext_pro_replicate": {
         "display_name": "Flux Kontext Pro",
         "type": "image",
         "provider": "replicate",
+        "model": "black-forest-labs/flux-kontext-pro",
         "tool_function": generate_image_by_flux_kontext_pro_replicate,
     },
     "generate_image_by_flux_kontext_max_replicate": {
         "display_name": "Flux Kontext Max",
         "type": "image",
         "provider": "replicate",
+        "model": "black-forest-labs/flux-kontext-max",
         "tool_function": generate_image_by_flux_kontext_max_replicate,
     },
 }
+
+
+def _normalize_model_name(name: str) -> str:
+    name = name.split('/')[-1].lower()
+    name = re.sub(r'[^a-z0-9]', '', name)
+    return re.sub(r'\d{5,6}$', '', name)
+
+
+def _is_tool_model_disabled(tool_info: ToolInfo, models_config: Dict) -> bool:
+    tool_model = tool_info.get("model")
+    if not tool_model:
+        return False
+    target = _normalize_model_name(tool_model)
+    for model_name, model_config in (models_config or {}).items():
+        if (
+            _normalize_model_name(model_name) == target
+            and model_config.get("is_disabled")
+        ):
+            return True
+    return False
 
 
 class ToolService:
@@ -232,9 +263,14 @@ class ToolService:
             for provider_name, provider_config in config_service.app_config.items():
                 # register all tools by api provider with api key
                 if provider_config.get("api_key", ""):
+                    models_config = provider_config.get("models", {})
                     for tool_id, tool_info in TOOL_MAPPING.items():
-                        if tool_info.get("provider") == provider_name:
-                            self.register_tool(tool_id, tool_info)
+                        if tool_info.get("provider") != provider_name:
+                            continue
+                        # skip tools whose model is disabled in settings
+                        if _is_tool_model_disabled(tool_info, models_config):
+                            continue
+                        self.register_tool(tool_id, tool_info)
             # Register comfyui workflow tools
             if config_service.app_config.get("comfyui", {}).get("url", ""):
                 await register_comfy_tools()

@@ -5,12 +5,13 @@ from types import NoneType
 from typing import Optional, List, Any
 from pydantic import BaseModel
 from openai.types import Image
-from openai import OpenAI, OpenAIError
+from openai import OpenAI
 from .image_base_provider import ImageProviderBase
 from ..utils.image_utils import get_image_info_and_save, generate_image_id
 from tools.video_generation_utils import get_image_base64
 from services.config_service import FILES_DIR, config_service
 from utils.http_client import HttpClient
+from utils.provider_url import normalize_provider_base_url
 
 
 class VolcesImagesResponse(BaseModel):
@@ -26,18 +27,37 @@ class VolcesImagesResponse(BaseModel):
 class VolcesProvider(ImageProviderBase):
     """Volces image generation provider implementation"""
 
+    def _get_base_url(self) -> str:
+        config = config_service.app_config.get("volces", {})
+        api_url = normalize_provider_base_url(str(config.get("url", "")))
+        if not api_url:
+            raise ValueError("Volces API URL is not configured")
+        return api_url
+
     def _create_client(self) -> OpenAI:
         """Create OpenAI client for Volces API"""
         config = config_service.app_config.get("volces", {})
         api_key = str(config.get("api_key", ""))
-        api_url = str(config.get("url", ""))
 
         if not api_key:
             raise ValueError("Volces API key is not configured")
-        if not api_url:
-            raise ValueError("Volces API URL is not configured")
 
-        return OpenAI(api_key=api_key, base_url=api_url)
+        return OpenAI(api_key=api_key, base_url=self._get_base_url())
+
+    def _actionable_error(self, error: Exception, model: str) -> Exception:
+        status_code = getattr(error, "status_code", None)
+        if status_code not in (404, 500):
+            return error
+        try:
+            endpoint = f"{self._get_base_url()}/images/generations"
+        except Exception:
+            endpoint = "the configured Volces endpoint"
+        return Exception(
+            f"Volces image request to {endpoint} failed with HTTP {status_code}. "
+            "Check that the provider Base URL in Settings ends with /api/v3 or "
+            "/api/plan/v3 (not a full .../images/generations endpoint), and that "
+            f"model '{model}' is activated for this API key. Original error: {error}"
+        )
 
     def _calculate_dimensions(self, aspect_ratio: str) -> tuple[int, int]:
         """Calculate width and height based on aspect ratio"""
@@ -114,9 +134,7 @@ class VolcesProvider(ImageProviderBase):
                 # input_image should be the file path
                 # volces does not support openai client to edit image. But no pool required QVQ
                 config = config_service.app_config.get("volces", {})
-                api_url = str(
-                    config.get("url", "https://ark.cn-beijing.volces.com/api/v3")
-                )
+                api_url = self._get_base_url()
                 headers = {
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {str(config.get('api_key', ''))}",
@@ -133,7 +151,7 @@ class VolcesProvider(ImageProviderBase):
                     "watermark": False,
                 }
 
-                url = str(api_url).strip("/") + "/images/generations"
+                url = f"{api_url}/images/generations"
 
                 async with HttpClient.create_aiohttp() as session:
                     async with session.post(
@@ -148,7 +166,10 @@ class VolcesProvider(ImageProviderBase):
                             except Exception:
                                 error_message = f"HTTP {response.status}"
                             raise Exception(
-                                f"Volces task creation failed: {error_message}"
+                                f"Volces image request to {url} failed with HTTP "
+                                f"{response.status}: {error_message}. Check that the "
+                                "provider Base URL in Settings ends with /api/v3 or "
+                                "/api/plan/v3, and that the model is activated."
                             )
 
                         result_dict = await response.json()
@@ -167,11 +188,7 @@ class VolcesProvider(ImageProviderBase):
 
             return await self._process_response(result, "Volces")
 
-        except OpenAIError as e:
-            print("Error generating image with Volces:", e)
-            traceback.print_exc()
-            raise e
         except Exception as e:
             print("Error generating image with Volces:", e)
             traceback.print_exc()
-            raise e
+            raise self._actionable_error(e, model) from e

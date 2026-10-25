@@ -10,6 +10,17 @@ export type ToolInfo = {
   id: string
   display_name?: string | null
   type?: 'image' | 'tool' | 'video'
+  model?: string
+}
+
+export async function listAllTools(): Promise<ToolInfo[]> {
+  const toolsResp = await fetch('/api/list_tools?include_all=true')
+    .then((res) => res.json())
+    .catch((err) => {
+      console.error(err)
+      return []
+    })
+  return toolsResp
 }
 
 export async function listModels(): Promise<{

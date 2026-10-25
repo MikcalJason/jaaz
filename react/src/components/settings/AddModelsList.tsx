@@ -2,25 +2,27 @@ import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Plus, Trash2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTrigger } from '../ui/dialog'
+import { useTranslation } from 'react-i18next'
+
+export type ModelType = 'text' | 'image' | 'video'
 
 export type ModelItem = {
   name: string
-  type: 'text' | 'image' | 'video'
+  display_name?: string
+  type: ModelType
+  is_disabled?: boolean
 }
 
 interface ModelsListProps {
-  models: Record<string, { type?: 'text' | 'image' | 'video' }>
+  models: Record<
+    string,
+    { type?: ModelType; is_disabled?: boolean; display_name?: string }
+  >
   onChange: (
-    models: Record<string, { type?: 'text' | 'image' | 'video' }>
+    models: Record<string, { type?: ModelType; is_disabled?: boolean }>
   ) => void
   label?: string
 }
@@ -30,15 +32,17 @@ export default function AddModelsList({
   onChange,
   label = 'Models',
 }: ModelsListProps) {
+  const { t } = useTranslation()
   const [modelItems, setModelItems] = useState<ModelItem[]>([])
   const [newModelName, setNewModelName] = useState('')
-  const [newModelType, setNewModelType] = useState<ModelItem['type']>('text')
   const [openAddModelDialog, setOpenAddModelDialog] = useState(false)
 
   useEffect(() => {
     const modelItems = Object.entries(models).map(([name, config]) => ({
       name,
-      type: (config.type || 'text') as 'text' | 'image' | 'video',
+      display_name: config.display_name,
+      type: (config.type || 'text') as ModelType,
+      is_disabled: config.is_disabled ?? false,
     }))
     setModelItems(modelItems.length > 0 ? modelItems : [])
   }, [models])
@@ -49,11 +53,14 @@ export default function AddModelsList({
       const validModels = items.filter((model) => model.name.trim())
       const modelsConfig: Record<
         string,
-        { type?: 'text' | 'image' | 'video' }
+        { type?: ModelType; is_disabled?: boolean }
       > = {}
 
       validModels.forEach((model) => {
-        modelsConfig[model.name] = { type: model.type }
+        modelsConfig[model.name] = {
+          type: model.type,
+          is_disabled: model.is_disabled,
+        }
       })
 
       onChange(modelsConfig)
@@ -65,31 +72,33 @@ export default function AddModelsList({
     if (newModelName) {
       const newItems = [
         ...modelItems,
-        { name: newModelName, type: newModelType },
+        { name: newModelName, type: 'text' as ModelType, is_disabled: false },
       ]
       setModelItems(newItems)
       notifyChange(newItems)
       setNewModelName('')
-      setNewModelType('text')
       setOpenAddModelDialog(false)
     }
   }
 
-  const handleTypeChange = (index: number, type: ModelItem['type']) => {
+  const handleToggleModel = (index: number, enabled: boolean) => {
     const newItems = modelItems.map((model, i) =>
-      i === index ? { ...model, type } : model
+      i === index ? { ...model, is_disabled: !enabled } : model
     )
     setModelItems(newItems)
     notifyChange(newItems)
   }
 
   const handleRemoveModel = (index: number) => {
-    if (modelItems.length > 1) {
-      const newItems = modelItems.filter((_, i) => i !== index)
-      setModelItems(newItems)
-      notifyChange(newItems)
-    }
+    const newItems = modelItems.filter((_, i) => i !== index)
+    setModelItems(newItems)
+    notifyChange(newItems)
   }
+
+  const textModelCount = modelItems.filter(
+    (model) => model.type === 'text'
+  ).length
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -98,15 +107,18 @@ export default function AddModelsList({
           <DialogTrigger asChild>
             <Button variant="secondary" size="sm">
               <Plus className="h-4 w-4 mr-1" />
-              Add Model
+              {t('settings:models.addModel')}
             </Button>
           </DialogTrigger>
           <DialogContent>
             <div className="space-y-5">
-              <Label>Model Name</Label>
+              <p className="text-sm text-muted-foreground">
+                {t('settings:models.addTextModelHint')}
+              </p>
+              <Label>{t('settings:models.modelName')}</Label>
               <Input
                 type="text"
-                placeholder="openai/gpt-4o"
+                placeholder={t('settings:models.placeholder')}
                 value={newModelName}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -115,24 +127,8 @@ export default function AddModelsList({
                 }}
                 onChange={(e) => setNewModelName(e.target.value)}
               />
-              <Label>Model Type</Label>
-              <Select
-                value={newModelType}
-                onValueChange={(value) =>
-                  setNewModelType(value as ModelItem['type'])
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="text">text</SelectItem>
-                  <SelectItem value="image">image</SelectItem>
-                  <SelectItem value="video">video</SelectItem>
-                </SelectContent>
-              </Select>
               <Button type="button" onClick={handleAddModel} className="w-full">
-                Add Model
+                {t('settings:models.addModel')}
               </Button>
             </div>
           </DialogContent>
@@ -141,25 +137,31 @@ export default function AddModelsList({
 
       <div className="space-y-2">
         {modelItems.map((model, index) => (
-          <div key={index} className="flex items-center justify-between">
-            <p className="w-[50%]">{model.name}</p>
-            <div className="flex items-center gap-6">
-              <Select
-                value={model.type}
-                onValueChange={(value) =>
-                  handleTypeChange(index, value as ModelItem['type'])
-                }
-              >
-                <SelectTrigger size="sm" className="w-[110px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="text">text</SelectItem>
-                  <SelectItem value="image">image</SelectItem>
-                  <SelectItem value="video">video</SelectItem>
-                </SelectContent>
-              </Select>
-              {modelItems.length > 1 && (
+          <div
+            key={model.name}
+            className="flex items-center justify-between gap-3"
+          >
+            <div
+              className={`flex-1 min-w-0 ${
+                model.is_disabled ? 'text-gray-400 line-through' : ''
+              }`}
+            >
+              <p className="truncate">{model.display_name || model.name}</p>
+              {model.display_name && (
+                <p className="text-xs text-muted-foreground truncate">
+                  {model.name}
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-4 shrink-0">
+              <span className="text-xs text-muted-foreground w-10 text-right">
+                {model.type}
+              </span>
+              <Switch
+                checked={!model.is_disabled}
+                onCheckedChange={(checked) => handleToggleModel(index, checked)}
+              />
+              {model.type === 'text' && textModelCount > 1 && (
                 <Button
                   type="button"
                   variant="outline"

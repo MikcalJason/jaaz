@@ -14,6 +14,7 @@
     "build:electron": "electron-builder",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",
+    "build:mac:local": "bash scripts/build-mac.sh",
     "build:linux": "electron-builder --linux",
     "build:ts": "cd electron && tsc",
     "watch:ts": "cd electron && tsc --watch",

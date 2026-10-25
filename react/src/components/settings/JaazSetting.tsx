@@ -1,12 +1,9 @@
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { LOGO_URL } from '@/constants'
 import { LLMConfig } from '@/types/types'
 import { useTranslation } from 'react-i18next'
-import { useAuth } from '@/contexts/AuthContext'
-import { useConfigs } from '@/contexts/configs'
 
 interface JaazSettingProps {
   config: LLMConfig
@@ -18,8 +15,6 @@ export default function JaazSetting({
   onConfigChange,
 }: JaazSettingProps) {
   const { t } = useTranslation()
-  const { authStatus } = useAuth()
-  const { setShowLoginDialog } = useConfigs()
 
   // Get available models from constants
   const availableModels = config.models || {}
@@ -77,13 +72,12 @@ export default function JaazSetting({
               <p className="w-[50%]">{modelName}</p>
               <div className="flex items-center gap-6">
                 <p>{modelConfig.type || 'text'}</p>
-                {/* TODO: re-enable this switch */}
-                {/* <Switch
+                <Switch
                   checked={!modelConfig.is_disabled}
                   onCheckedChange={(checked) =>
                     handleModelToggle(modelName, checked)
                   }
-                /> */}
+                />
               </div>
             </div>
           )
@@ -101,48 +95,38 @@ export default function JaazSetting({
           <p className="font-bold text-2xl w-fit">Jaaz</p>
           {/* <span>✨ Custom Provider</span> */}
         </div>
+      </div>
 
-        {/* Show login button if not logged in */}
-        {!authStatus.is_logged_in && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowLoginDialog(true)}
-          >
-            {t('common:auth.login')}
-          </Button>
+      {/* Models Configuration */}
+      <div className="space-y-2">
+        {(config.api_key ?? '').trim() ? (
+          <ModelsList />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {t('settings:models.jaazUnavailable')}
+          </p>
         )}
       </div>
 
-      {/* Only show configuration when logged in */}
-      {authStatus.is_logged_in && (
-        <>
-          {/* Models Configuration */}
-          <div className="space-y-2">
-            <ModelsList />
-          </div>
-
-          {/* Max Tokens Input */}
-          <div className="space-y-2">
-            <Label htmlFor="jaaz-maxTokens">
-              {t('settings:provider.maxTokens')}
-            </Label>
-            <Input
-              id="jaaz-maxTokens"
-              type="number"
-              placeholder={t('settings:provider.maxTokensPlaceholder')}
-              value={config.max_tokens ?? 8192}
-              onChange={(e) =>
-                handleChange('max_tokens', parseInt(e.target.value))
-              }
-              className="w-full"
-            />
-            <p className="text-xs text-gray-500">
-              {t('settings:provider.maxTokensDescription')}
-            </p>
-          </div>
-        </>
-      )}
+      {/* Max Tokens Input */}
+      <div className="space-y-2">
+        <Label htmlFor="jaaz-maxTokens">
+          {t('settings:provider.maxTokens')}
+        </Label>
+        <Input
+          id="jaaz-maxTokens"
+          type="number"
+          placeholder={t('settings:provider.maxTokensPlaceholder')}
+          value={config.max_tokens ?? 8192}
+          onChange={(e) =>
+            handleChange('max_tokens', parseInt(e.target.value))
+          }
+          className="w-full"
+        />
+        <p className="text-xs text-gray-500">
+          {t('settings:provider.maxTokensDescription')}
+        </p>
+      </div>
     </div>
   )
 }

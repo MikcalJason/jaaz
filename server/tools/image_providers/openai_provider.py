@@ -6,6 +6,7 @@ from .image_base_provider import ImageProviderBase
 from ..utils.image_utils import get_image_info_and_save, generate_image_id
 from services.config_service import FILES_DIR
 from services.config_service import config_service
+from utils.provider_url import normalize_provider_base_url
 
 
 class OpenAIImageProvider(ImageProviderBase):
@@ -28,7 +29,7 @@ class OpenAIImageProvider(ImageProviderBase):
 
         config = config_service.app_config.get('openai', {})
         self.api_key = str(config.get("api_key", ""))
-        self.base_url = str(config.get("url", ""))  # 可选
+        self.base_url = normalize_provider_base_url(config.get("url", ""))  # 可选
 
         if not self.api_key:
             raise ValueError("OpenAI API key is not configured")

@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, List
 
 from .video_base_provider import VideoProviderBase
 from utils.http_client import HttpClient
+from utils.provider_url import normalize_provider_base_url
 from services.config_service import config_service
 
 
@@ -14,7 +15,7 @@ class VolcesVideoProvider(VideoProviderBase, provider_name="volces"):
     def __init__(self):
         config = config_service.app_config.get('volces', {})
         self.api_key = config.get("api_key", "")
-        self.base_url = config.get("url", "").rstrip("/")
+        self.base_url = normalize_provider_base_url(config.get("url", ""))
         self.model_name = config.get("model_name", "doubao-seedance-1-0-pro")
 
         if not self.api_key:

@@ -8,6 +8,7 @@ class ToolInfoRequired(TypedDict):
 class ToolInfoOptional(TypedDict, total=False):
     display_name: Optional[str]
     type: Optional[str]
+    model: Optional[str]
 
 class ToolInfo(ToolInfoRequired, ToolInfoOptional):
     pass

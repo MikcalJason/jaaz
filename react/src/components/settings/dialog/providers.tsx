@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button'
 import useConfigsStore from '@/stores/configs'
 import { LLMConfig } from '@/types/types'
 import { getConfig, updateConfig } from '@/api/config'
-import { useRefreshModels } from '@/contexts/configs'
+import { listAllTools, ToolInfo } from '@/api/model'
+import { useConfigs, useRefreshModels } from '@/contexts/configs'
 import { Plus, Save } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -15,7 +16,9 @@ import { toast } from 'sonner'
 const SettingProviders = () => {
   const { t } = useTranslation()
   const { providers, setProviders } = useConfigsStore()
+  const { allTools } = useConfigs()
   const refreshModels = useRefreshModels()
+  const [toolCatalog, setToolCatalog] = useState<ToolInfo[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
   const [isAddProviderDialogOpen, setIsAddProviderDialogOpen] = useState(false)
@@ -23,9 +26,13 @@ const SettingProviders = () => {
   useEffect(() => {
     const loadConfig = async () => {
       try {
-        const config: { [key: string]: LLMConfig } = await getConfig()
+        const [config, catalog] = await Promise.all([
+          getConfig(),
+          listAllTools(),
+        ])
 
         setProviders(config)
+        setToolCatalog(catalog)
       } catch (error) {
         console.error('Error loading configuration:', error)
         setErrorMessage(t('settings:messages.failedToLoad'))
@@ -104,6 +111,7 @@ const SettingProviders = () => {
                 config={providers[key]}
                 onConfigChange={handleConfigChange}
                 onDeleteProvider={handleDeleteProvider}
+                toolCatalog={toolCatalog.length > 0 ? toolCatalog : allTools}
               />
             )}
 

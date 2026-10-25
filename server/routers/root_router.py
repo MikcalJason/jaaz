@@ -83,6 +83,9 @@ async def get_models() -> list[ModelInfo]:
         for model_name in models:
             model = models[model_name]
             model_type = model.get('type', 'text')
+            # Skip models disabled in settings
+            if model.get('is_disabled'):
+                continue
             # Only return text models
             if model_type == 'text':
                 res.append({
@@ -95,9 +98,25 @@ async def get_models() -> list[ModelInfo]:
 
 
 @router.get("/list_tools")
-async def list_tools() -> list[ToolInfoJson]:
+async def list_tools(include_all: bool = False) -> list[ToolInfoJson]:
     config = config_service.get_config()
     res: list[ToolInfoJson] = []
+
+    # include_all returns the full tool catalog (used by settings), even for
+    # tools that are currently unregistered or disabled.
+    if include_all:
+        for tool_id, tool_info in TOOL_MAPPING.items():
+            if tool_info.get('provider') == 'system':
+                continue
+            res.append({
+                'id': tool_id,
+                'provider': tool_info.get('provider', ''),
+                'type': tool_info.get('type', ''),
+                'display_name': tool_info.get('display_name', ''),
+                'model': tool_info.get('model', ''),
+            })
+        return res
+
     for tool_id, tool_info in tool_service.tools.items():
         if tool_info.get('provider') == 'system':
             continue
@@ -110,6 +129,7 @@ async def list_tools() -> list[ToolInfoJson]:
             'provider': tool_info.get('provider', ''),
             'type': tool_info.get('type', ''),
             'display_name': tool_info.get('display_name', ''),
+            'model': tool_info.get('model', ''),
         })
 
     # Handle ComfyUI models separately

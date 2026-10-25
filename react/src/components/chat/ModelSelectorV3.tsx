@@ -308,6 +308,9 @@ const ModelSelectorV3: React.FC<ModelSelectorV3Props> = ({
                     const modelName = activeTab === 'text'
                       ? (model as ModelInfo).model
                       : (model as ToolInfo).display_name || (model as ToolInfo).id
+                    const modelId = activeTab === 'text'
+                      ? undefined
+                      : (model as ToolInfo).model
 
                     return (
                       <div
@@ -315,8 +318,11 @@ const ModelSelectorV3: React.FC<ModelSelectorV3Props> = ({
                         className="flex items-center justify-between p-3 hover:bg-muted/50 transition-colors mb-2 cursor-pointer"
                         onClick={() => handleModelClick(modelKey)}
                       >
-                        <div className="flex-1">
-                          <div className="font-medium text-sm">{modelName}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm truncate">{modelName}</div>
+                          {modelId && (
+                            <div className="text-xs text-muted-foreground truncate">{modelId}</div>
+                          )}
                         </div>
                         <Checkbox
                           checked={isModelSelected(modelKey)}

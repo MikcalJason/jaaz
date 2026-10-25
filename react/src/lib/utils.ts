@@ -16,3 +16,12 @@ export function dataURLToFile(dataURL: string, filename: string) {
   }
   return new File([u8arr], filename, { type: mime })
 }
+
+export function normalizeModelName(name: string) {
+  return name
+    .split('/')
+    .pop()!
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .replace(/\d{5,6}$/, '')
+}
