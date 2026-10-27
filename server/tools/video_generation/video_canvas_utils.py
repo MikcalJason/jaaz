@@ -221,7 +221,7 @@ async def get_video_info_and_save(
     print("🎥 Video saved to", temp_path)
 
     try:
-        media_info = MediaInfo.parse(temp_path)  # type: ignore
+        media_info = await asyncio.to_thread(MediaInfo.parse, temp_path)  # type: ignore
         width: int = 0
         height: int = 0
 

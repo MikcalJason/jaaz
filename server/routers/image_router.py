@@ -16,6 +16,78 @@ from utils.http_client import HttpClient
 router = APIRouter(prefix="/api")
 os.makedirs(FILES_DIR, exist_ok=True)
 
+
+def _process_upload(
+    content: bytes,
+    filename: str,
+    file_id: str,
+    max_size_mb: float,
+) -> tuple[str, str, int, int]:
+    """Decode, optionally compress and persist an uploaded image. Blocking — run off the event loop."""
+    original_size_mb = len(content) / (1024 * 1024)
+
+    with Image.open(BytesIO(content)) as img:
+        width, height = img.size
+
+        if original_size_mb > max_size_mb:
+            print(f'🦄 Image size ({original_size_mb:.2f}MB) exceeds limit ({max_size_mb}MB), compressing...')
+
+            # Convert to RGB if necessary (for JPEG compression)
+            if img.mode in ('RGBA', 'LA', 'P'):
+                # Create a white background for transparent images
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                if img.mode == 'P':
+                    img = img.convert('RGBA')
+                background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                img = background
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+
+            compressed_content = compress_image(img, max_size_mb)
+
+            # Force JPEG for compressed images
+            extension = 'jpg'
+            file_path = os.path.join(FILES_DIR, f'{file_id}.{extension}')
+
+            # compress_image already produced the final JPEG — writing it directly avoids a
+            # decode/re-encode round trip that both wastes CPU and breaks the size limit.
+            with open(file_path, 'wb') as f:
+                f.write(compressed_content)
+
+            # compress_image may have downscaled; reading the header is cheap and keeps dims truthful
+            with Image.open(file_path) as compressed_img:
+                width, height = compressed_img.size
+
+            final_size_mb = len(compressed_content) / (1024 * 1024)
+            print(f'🦄 Compressed from {original_size_mb:.2f}MB to {final_size_mb:.2f}MB')
+            return file_path, extension, width, height
+
+        # Determine the file extension from original file
+        mime_type, _ = guess_type(filename)
+        if mime_type and mime_type.startswith('image/'):
+            extension = mime_type.split('/')[-1]
+            if extension == 'jpeg':
+                extension = 'jpg'
+        else:
+            extension = 'jpg'  # Default to jpg for unknown types
+
+        file_path = os.path.join(FILES_DIR, f'{file_id}.{extension}')
+
+        save_format = 'JPEG' if extension.lower() in ['jpg', 'jpeg'] else extension.upper()
+
+        # Already in the target format: pass the bytes through instead of a needless (and lossy) re-encode
+        if img.format == save_format:
+            with open(file_path, 'wb') as f:
+                f.write(content)
+            return file_path, extension, width, height
+
+        if save_format == 'JPEG':
+            img = img.convert('RGB')
+
+        img.save(file_path, format=save_format)
+        return file_path, extension, width, height
+
+
 # 上传图片接口，支持表单提交
 @router.post("/upload_image")
 async def upload_image(file: UploadFile = File(...), max_size_mb: float = 3.0):
@@ -29,63 +101,10 @@ async def upload_image(file: UploadFile = File(...), max_size_mb: float = 3.0):
         content = await file.read()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error reading file: {e}")
-    original_size_mb = len(content) / (1024 * 1024)  # Convert to MB
 
-    # Open the image from bytes to get its dimensions
-    with Image.open(BytesIO(content)) as img:
-        width, height = img.size
-        
-        # Check if compression is needed
-        if original_size_mb > max_size_mb:
-            print(f'🦄 Image size ({original_size_mb:.2f}MB) exceeds limit ({max_size_mb}MB), compressing...')
-            
-            # Convert to RGB if necessary (for JPEG compression)
-            if img.mode in ('RGBA', 'LA', 'P'):
-                # Create a white background for transparent images
-                background = Image.new('RGB', img.size, (255, 255, 255))
-                if img.mode == 'P':
-                    img = img.convert('RGBA')
-                background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
-                img = background
-            elif img.mode != 'RGB':
-                img = img.convert('RGB')
-            
-            # Compress the image
-            compressed_content = compress_image(img, max_size_mb)
-            
-            # Save compressed image using Image.save
-            extension = 'jpg'  # Force JPEG for compressed images
-            file_path = os.path.join(FILES_DIR, f'{file_id}.{extension}')
-            
-            # Create new image from compressed content and save
-            with Image.open(BytesIO(compressed_content)) as compressed_img:
-                width, height = compressed_img.size
-                await run_in_threadpool(compressed_img.save, file_path, format='JPEG', quality=95, optimize=True)
-                # compressed_img.save(file_path, format='JPEG', quality=95, optimize=True)
-            
-            final_size_mb = len(compressed_content) / (1024 * 1024)
-            print(f'🦄 Compressed from {original_size_mb:.2f}MB to {final_size_mb:.2f}MB')
-        else:
-            # Determine the file extension from original file
-            mime_type, _ = guess_type(filename)
-            if mime_type and mime_type.startswith('image/'):
-                extension = mime_type.split('/')[-1]
-                # Handle common image format mappings
-                if extension == 'jpeg':
-                    extension = 'jpg'
-            else:
-                extension = 'jpg'  # Default to jpg for unknown types
-            
-            # Save original image using Image.save
-            file_path = os.path.join(FILES_DIR, f'{file_id}.{extension}')
-            
-            # Determine save format based on extension
-            save_format = 'JPEG' if extension.lower() in ['jpg', 'jpeg'] else extension.upper()
-            if save_format == 'JPEG':
-                img = img.convert('RGB')
-            
-            # img.save(file_path, format=save_format)
-            await run_in_threadpool(img.save, file_path, format=save_format)
+    file_path, extension, width, height = await run_in_threadpool(
+        _process_upload, content, filename, file_id, max_size_mb
+    )
 
     # 返回文件信息
     print('🦄upload_image file_path', file_path)

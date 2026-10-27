@@ -1,3 +1,4 @@
+import asyncio
 import os
 import traceback
 from typing import Optional, Any
@@ -49,7 +50,9 @@ class OpenAIImageProvider(ImageProviderBase):
                 full_path = os.path.join(FILES_DIR, input_image_path)
 
                 with open(full_path, 'rb') as image_file:
-                    result = self.client.images.edit(
+                    # Sync SDK call — keep the event loop free for the whole generation
+                    result = await asyncio.to_thread(
+                        self.client.images.edit,
                         model=model,
                         image=image_file,
                         prompt=prompt,
@@ -67,7 +70,8 @@ class OpenAIImageProvider(ImageProviderBase):
                 }
                 size = size_map.get(aspect_ratio, "1024x1024")
 
-                result = self.client.images.generate(
+                result = await asyncio.to_thread(
+                    self.client.images.generate,
                     model=model,
                     prompt=prompt,
                     n=kwargs.get("num_images", 1),

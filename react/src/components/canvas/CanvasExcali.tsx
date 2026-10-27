@@ -39,6 +39,49 @@ type CanvasExcaliProps = {
   initialData?: ExcalidrawInitialDataState
 }
 
+const THUMBNAIL_MAX_EDGE = 480
+const THUMBNAIL_CACHE_LIMIT = 32
+
+function loadImage(dataURL: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = reject
+    img.src = dataURL
+  })
+}
+
+async function downscaleToThumbnail(dataURL: string): Promise<string> {
+  const img = await loadImage(dataURL)
+  const longestEdge = Math.max(img.naturalWidth, img.naturalHeight)
+  const scale = Math.min(1, THUMBNAIL_MAX_EDGE / longestEdge)
+  const width = Math.max(1, Math.round(img.naturalWidth * scale))
+  const height = Math.max(1, Math.round(img.naturalHeight * scale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return ''
+
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, width, height)
+  ctx.drawImage(img, 0, 0, width, height)
+  return canvas.toDataURL('image/jpeg', 0.75)
+}
+
+// Pan/zoom/selection fire onChange without touching persisted content — skip those saves.
+function computeContentSignature(
+  elements: Readonly<OrderedExcalidrawElement[]>,
+  files: BinaryFiles
+): string {
+  let maxVersion = 0
+  for (const element of elements) {
+    if (element.version > maxVersion) maxVersion = element.version
+  }
+  return `${elements.length}|${maxVersion}|${Object.keys(files).length}`
+}
+
 const CanvasExcali: React.FC<CanvasExcaliProps> = ({
   canvasId,
   initialData,
@@ -46,6 +89,9 @@ const CanvasExcali: React.FC<CanvasExcaliProps> = ({
   const { excalidrawAPI, setExcalidrawAPI, setCanvasId } = useCanvas()
 
   const { i18n } = useTranslation()
+
+  const lastSavedSignature = useRef('')
+  const thumbnailCache = useRef(new Map<string, string>())
 
   // Immediate handler for UI updates (no debounce)
   const handleSelectionChange = (
@@ -73,9 +119,28 @@ const CanvasExcali: React.FC<CanvasExcaliProps> = ({
     }
   }
 
+  const getThumbnail = async (fileId: string, dataURL: string) => {
+    const cache = thumbnailCache.current
+    const cached = cache.get(fileId)
+    if (cached !== undefined) return cached
+
+    let thumbnail = ''
+    try {
+      thumbnail = await downscaleToThumbnail(dataURL)
+    } catch (error) {
+      console.warn('Failed to build canvas thumbnail:', error)
+    }
+
+    if (cache.size >= THUMBNAIL_CACHE_LIMIT) {
+      cache.delete(cache.keys().next().value as string)
+    }
+    cache.set(fileId, thumbnail)
+    return thumbnail
+  }
+
   // Debounced handler for saving (performance optimization)
   const handleSave = useDebounce(
-    (
+    async (
       elements: Readonly<OrderedExcalidrawElement[]>,
       appState: AppState,
       files: BinaryFiles
@@ -83,6 +148,12 @@ const CanvasExcali: React.FC<CanvasExcaliProps> = ({
       if (elements.length === 0 || !appState) {
         return
       }
+
+      const signature = computeContentSignature(elements, files)
+      if (signature === lastSavedSignature.current) {
+        return
+      }
+      lastSavedSignature.current = signature
 
       const data: CanvasData = {
         elements,
@@ -93,18 +164,22 @@ const CanvasExcali: React.FC<CanvasExcaliProps> = ({
         files,
       }
 
-      let thumbnail = ''
       const latestImage = elements
         .filter((element) => element.type === 'image')
         .sort((a, b) => b.updated - a.updated)[0]
-      if (latestImage) {
-        const file = files[latestImage.fileId!]
-        if (file) {
-          thumbnail = file.dataURL
-        }
-      }
+      const file = latestImage ? files[latestImage.fileId!] : undefined
 
-      saveCanvas(canvasId, { data, thumbnail })
+      // Omitting the thumbnail keeps the stored one instead of clearing it
+      const thumbnail =
+        file?.dataURL && latestImage.fileId
+          ? (await getThumbnail(latestImage.fileId, file.dataURL)) || undefined
+          : undefined
+
+      saveCanvas(canvasId, { data, thumbnail }).catch((error) => {
+        console.error('Failed to save canvas:', error)
+        // Let the next change retry instead of treating the scene as already persisted
+        lastSavedSignature.current = ''
+      })
     },
     1000
   )
@@ -117,6 +192,10 @@ const CanvasExcali: React.FC<CanvasExcaliProps> = ({
   ) => {
     // Immediate UI updates
     handleSelectionChange(elements, appState)
+
+    if (computeContentSignature(elements, files) === lastSavedSignature.current) {
+      return
+    }
     // Debounced save operation
     handleSave(elements, appState, files)
   }
@@ -139,6 +218,16 @@ const CanvasExcali: React.FC<CanvasExcaliProps> = ({
   useEffect(() => {
     setCanvasId(canvasId)
   }, [canvasId, setCanvasId])
+
+  // Treat the loaded scene as already persisted so opening a canvas does not re-upload it
+  useEffect(() => {
+    if (!initialData?.elements) return
+    lastSavedSignature.current = computeContentSignature(
+      initialData.elements as unknown as OrderedExcalidrawElement[],
+      (initialData.files ?? {}) as BinaryFiles
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 在组件挂载和主题变化时设置深色模式下的背景色
   useEffect(() => {

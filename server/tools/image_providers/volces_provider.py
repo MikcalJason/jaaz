@@ -1,3 +1,4 @@
+import asyncio
 import os
 import random
 import traceback
@@ -82,6 +83,7 @@ class VolcesProvider(ImageProviderBase):
         Returns:
             tuple[str, int, int, str]: (mime_type, width, height, filename)
         """
+        image_url = None
         if hasattr(result, "data"):
             if len(result.data) > 0:
                 image_data = result.data[0]
@@ -90,7 +92,7 @@ class VolcesProvider(ImageProviderBase):
         elif isinstance(result, str):
             image_url = result
         # If no valid image data found
-        else:
+        if not image_url:
             raise Exception(
                 f"{error_prefix} image generation failed: No valid image data in response"
             )
@@ -177,7 +179,10 @@ class VolcesProvider(ImageProviderBase):
                         print(f"👇SeedEdit Url: {result}")
 
             else:
-                result = client.images.generate(
+                # The OpenAI SDK call is blocking; a Seedream generation takes tens of seconds
+                # and would otherwise freeze every other request on the event loop.
+                result = await asyncio.to_thread(
+                    client.images.generate,
                     model=model,
                     prompt=prompt,
                     size=kwargs.get("size", f"{width}x{height}"),

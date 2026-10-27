@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import Response
 #from routers.agent import chat
+from fastapi.concurrency import run_in_threadpool
 from services.chat_service import handle_chat
 from services.db_service import db_service
 import asyncio
@@ -13,6 +15,64 @@ from services.config_service import FILES_DIR
 import os
 
 router = APIRouter(prefix="/api/canvas")
+
+
+def _inpaint_sync(image_b64: str, mask_b64: str) -> str:
+    """Decode mask + run OpenCV inpaint + re-encode. CPU bound: runs in a thread."""
+
+    def decode_b64(data_url: str) -> np.ndarray:
+        if ',' in data_url:
+            data_url = data_url.split(',', 1)[1]
+        img_bytes = base64.b64decode(data_url)
+        img = Image.open(io.BytesIO(img_bytes))
+        if img.mode == 'RGBA':
+            img = img.convert('RGB')
+        elif img.mode == 'L':
+            img = img.convert('RGB')
+        return np.array(img)
+
+    def decode_mask(data_url: str) -> np.ndarray:
+        if ',' in data_url:
+            data_url = data_url.split(',', 1)[1]
+        img_bytes = base64.b64decode(data_url)
+        img = Image.open(io.BytesIO(img_bytes))
+        if img.mode == 'RGBA':
+            img = img.convert('L')
+        elif img.mode == 'RGB':
+            img = img.convert('L')
+        return np.array(img)
+
+    image_np = decode_b64(image_b64)
+    mask_np = decode_mask(mask_b64)
+
+    if image_np.shape[:2] != mask_np.shape[:2]:
+        mask_img = Image.fromarray(mask_np)
+        mask_img = mask_img.resize((image_np.shape[1], image_np.shape[0]), Image.LANCZOS)
+        mask_np = np.array(mask_img)
+
+    _, mask_binary = cv2.threshold(mask_np, 127, 255, cv2.THRESH_BINARY)
+
+    mask_area = np.sum(mask_binary > 0)
+    total_area = mask_binary.shape[0] * mask_binary.shape[1]
+    coverage = mask_area / total_area
+
+    if coverage < 0.02:
+        kernel_size, dilate_iters, inpaint_radius = 3, 1, 5
+    elif coverage < 0.05:
+        kernel_size, dilate_iters, inpaint_radius = 5, 1, 8
+    else:
+        kernel_size, dilate_iters, inpaint_radius = 7, 2, 12
+
+    print(f"Inpaint adaptive params: coverage={coverage:.4f}, kernel={kernel_size}, iters={dilate_iters}, radius={inpaint_radius}")
+
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+    mask_dilated = cv2.dilate(mask_binary, kernel, iterations=dilate_iters)
+    result_np = cv2.inpaint(image_np, mask_dilated, inpaintRadius=inpaint_radius, flags=cv2.INPAINT_NS)
+
+    result_img = Image.fromarray(result_np).convert('RGB')
+    buf = io.BytesIO()
+    result_img.save(buf, format='PNG')
+    return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}"
 
 @router.get("/list")
 async def list_canvases():
@@ -30,13 +90,17 @@ async def create_canvas(request: Request):
 
 @router.get("/{id}")
 async def get_canvas(id: str):
-    return await db_service.get_canvas_data(id)
+    body = await db_service.get_canvas_response_json(id)
+    return Response(content=body if body is not None else b"null", media_type="application/json")
 
 @router.post("/{id}/save")
 async def save_canvas(id: str, request: Request):
-    payload = await request.json()
-    data_str = json.dumps(payload['data'])
-    await db_service.save_canvas_data(id, data_str, payload['thumbnail'])
+    body = await request.body()
+    # Canvas payloads embed every generated image as base64 and can reach hundreds of MB;
+    # both the parse and the re-serialize would otherwise stall the event loop.
+    payload = await run_in_threadpool(json.loads, body)
+    data_str = await run_in_threadpool(json.dumps, payload['data'])
+    await db_service.save_canvas_data(id, data_str, payload.get('thumbnail'))
     return {"id": id }
 
 @router.post("/{id}/rename")
@@ -72,77 +136,12 @@ async def inpaint_region(id: str, request: Request):
         if not image_b64 or not mask_b64:
             raise HTTPException(status_code=400, detail="Both image_b64 and mask_b64 are required")
 
-        # Decode base64 data URLs
-        def decode_b64(data_url: str) -> np.ndarray:
-            # Strip data URL prefix if present
-            if ',' in data_url:
-                data_url = data_url.split(',', 1)[1]
-            img_bytes = base64.b64decode(data_url)
-            img = Image.open(io.BytesIO(img_bytes))
-            # Convert to RGB numpy array for OpenCV
-            if img.mode == 'RGBA':
-                img = img.convert('RGB')
-            elif img.mode == 'L':
-                img = img.convert('RGB')
-            return np.array(img)
+        inpainted_b64 = await run_in_threadpool(_inpaint_sync, image_b64, mask_b64)
 
-        def decode_mask(data_url: str) -> np.ndarray:
-            if ',' in data_url:
-                data_url = data_url.split(',', 1)[1]
-            img_bytes = base64.b64decode(data_url)
-            img = Image.open(io.BytesIO(img_bytes))
-            # Convert to grayscale for mask
-            if img.mode == 'RGBA':
-                img = img.convert('L')
-            elif img.mode == 'RGB':
-                img = img.convert('L')
-            return np.array(img)
+        return {"inpainted_b64": inpainted_b64}
 
-        image_np = decode_b64(image_b64)
-        mask_np = decode_mask(mask_b64)
-
-        # Ensure mask and image have the same dimensions
-        if image_np.shape[:2] != mask_np.shape[:2]:
-            # Resize mask to match image dimensions
-            mask_img = Image.fromarray(mask_np)
-            mask_img = mask_img.resize((image_np.shape[1], image_np.shape[0]), Image.LANCZOS)
-            mask_np = np.array(mask_img)
-
-        # Binarize mask: white pixels (value > 127) = area to inpaint
-        _, mask_binary = cv2.threshold(mask_np, 127, 255, cv2.THRESH_BINARY)
-
-        # Adaptive parameters based on mask coverage ratio
-        mask_area = np.sum(mask_binary > 0)
-        total_area = mask_binary.shape[0] * mask_binary.shape[1]
-        coverage = mask_area / total_area
-
-        if coverage < 0.02:  # Small text: light touch
-            kernel_size, dilate_iters, inpaint_radius = 3, 1, 5
-        elif coverage < 0.05:  # Medium text
-            kernel_size, dilate_iters, inpaint_radius = 5, 1, 8
-        else:  # Large text: aggressive fill
-            kernel_size, dilate_iters, inpaint_radius = 7, 2, 12
-
-        print(f"Inpaint adaptive params: coverage={coverage:.4f}, kernel={kernel_size}, iters={dilate_iters}, radius={inpaint_radius}")
-
-        # Dilate mask to ensure full coverage of text edges
-        kernel = np.ones((kernel_size, kernel_size), np.uint8)
-        mask_dilated = cv2.dilate(mask_binary, kernel, iterations=dilate_iters)
-
-        # Run OpenCV inpainting — Navier-Stokes handles larger areas better than Telea
-        result_np = cv2.inpaint(image_np, mask_dilated, inpaintRadius=inpaint_radius, flags=cv2.INPAINT_NS)
-
-        # Convert result back to base64 (result_np is already RGB from PIL input)
-        result_img = Image.fromarray(result_np)
-        result_img = result_img.convert('RGB')
-        buf = io.BytesIO()
-        result_img.save(buf, format='PNG')
-        result_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-
-        return {
-            "inpainted_b64": f"data:image/png;base64,{result_b64}"
-        }
-
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Inpaint error: {e}")
         import traceback

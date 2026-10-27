@@ -1,6 +1,5 @@
 import os
 from fastapi import APIRouter
-import requests
 import httpx
 from models.tool_model import ToolInfoJson
 from services.tool_service import tool_service
@@ -15,15 +14,17 @@ from services.tool_service import TOOL_MAPPING
 router = APIRouter(prefix="/api")
 
 
-def get_ollama_model_list() -> List[str]:
+async def get_ollama_model_list() -> List[str]:
     base_url = config_service.get_config().get('ollama', {}).get(
         'url', os.getenv('OLLAMA_HOST', 'http://localhost:11434'))
     try:
-        response = requests.get(f'{base_url}/api/tags', timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        return [model['name'] for model in data.get('models', [])]
-    except requests.RequestException as e:
+        timeout = httpx.Timeout(5.0)
+        async with HttpClient.create(timeout=timeout) as client:
+            response = await client.get(f'{base_url}/api/tags')
+            response.raise_for_status()
+            data = response.json()
+            return [model['name'] for model in data.get('models', [])]
+    except Exception as e:
         print(f"Error querying Ollama: {e}")
         return []
 
@@ -58,7 +59,7 @@ async def get_models() -> list[ModelInfo]:
         'url', os.getenv('OLLAMA_HOST', 'http://localhost:11434'))
     # Add Ollama models if URL is available
     if ollama_url and ollama_url.strip():
-        ollama_models = get_ollama_model_list()
+        ollama_models = await get_ollama_model_list()
         for ollama_model in ollama_models:
             res.append({
                 'provider': 'ollama',
@@ -151,8 +152,8 @@ async def list_tools(include_all: bool = False) -> list[ToolInfoJson]:
 
 
 @router.get("/list_chat_sessions")
-async def list_chat_sessions():
-    return await db_service.list_sessions()
+async def list_chat_sessions(canvas_id: str = ""):
+    return await db_service.list_sessions(canvas_id)
 
 
 @router.get("/chat_session/{session_id}")

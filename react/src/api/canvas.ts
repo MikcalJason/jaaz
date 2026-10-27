@@ -47,7 +47,7 @@ export async function saveCanvas(
   id: string,
   payload: {
     data: CanvasData
-    thumbnail: string
+    thumbnail?: string
   }
 ): Promise<void> {
   const response = await fetch(`/api/canvas/${id}/save`, {

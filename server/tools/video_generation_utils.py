@@ -1,6 +1,7 @@
 # from engineio import payload
 from utils.http_client import HttpClient
 
+import asyncio
 import aiofiles
 import io
 import os
@@ -37,7 +38,7 @@ async def get_video_info_and_save(
     print("🎥 Video saved to", temp_path)
 
     try:
-        media_info = MediaInfo.parse(temp_path)
+        media_info = await asyncio.to_thread(MediaInfo.parse, temp_path)
         for track in media_info.tracks:  # type: ignore
             if track.track_type == "Video":
                 width = track.width
