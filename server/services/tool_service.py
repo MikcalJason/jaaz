@@ -224,13 +224,16 @@ def _is_tool_model_disabled(tool_info: ToolInfo, models_config: Dict) -> bool:
     if not tool_model:
         return False
     target = _normalize_model_name(tool_model)
-    for model_name, model_config in (models_config or {}).items():
-        if (
-            _normalize_model_name(model_name) == target
-            and model_config.get("is_disabled")
-        ):
+    models_config = models_config or {}
+    matched = False
+    for model_name, model_config in models_config.items():
+        if _normalize_model_name(model_name) != target:
+            continue
+        matched = True
+        if model_config.get("is_disabled"):
             return True
-    return False
+    # 配置里根本没有这个模型：说明用户已从设置里删掉它，工具也不该再出现在列表里
+    return bool(models_config) and not matched
 
 
 class ToolService:
@@ -292,6 +295,12 @@ class ToolService:
         self.tools.clear()
         # 重新注册必须的工具
         self._register_required_tools()
+        # 工具集合变了，之前缓存的已编译智能体图会持有旧工具对象，需要失效
+        try:
+            from services.langgraph_service.agent_service import invalidate_graph_cache
+            invalidate_graph_cache()
+        except Exception as e:
+            print(f'⚠️ Failed to invalidate graph cache: {e}')
 
 
 tool_service = ToolService()

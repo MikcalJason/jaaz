@@ -13,6 +13,8 @@ export class SocketIOManager {
   private reconnectAttempts = 0
   private maxReconnectAttempts = 5
   private reconnectDelay = 1000
+  // 当前订阅的会话，重连后需要重新 join
+  private currentSessionId: string | null = null
 
   constructor(private config: SocketConfig = {}) {
     if (config.autoConnect !== false) {
@@ -45,6 +47,12 @@ export class SocketIOManager {
         console.log('✅ Socket.IO connected:', this.socket?.id)
         this.connected = true
         this.reconnectAttempts = 0
+        // 重连后重新订阅当前会话，否则会漏掉后续事件
+        if (this.currentSessionId) {
+          this.socket?.emit('join_session', {
+            session_id: this.currentSessionId,
+          })
+        }
         resolve(true)
       })
 
@@ -144,6 +152,23 @@ export class SocketIOManager {
         break
       default:
         console.log('⚠️ Unknown session update type:', type)
+    }
+  }
+
+  /** 订阅指定会话的事件，服务端只会把该会话的流式事件推给订阅者 */
+  joinSession(sessionId: string) {
+    this.currentSessionId = sessionId
+    if (this.socket && this.connected) {
+      this.socket.emit('join_session', { session_id: sessionId })
+    }
+  }
+
+  leaveSession(sessionId: string) {
+    if (this.currentSessionId === sessionId) {
+      this.currentSessionId = null
+    }
+    if (this.socket && this.connected) {
+      this.socket.emit('leave_session', { session_id: sessionId })
     }
   }
 

@@ -4,7 +4,7 @@ import sqlite3
 import json
 import os
 from io import BytesIO
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import aiosqlite
 from PIL import Image
 from .config_service import USER_DATA_DIR
@@ -143,6 +143,22 @@ class DatabaseService:
                 INSERT INTO chat_messages (session_id, role, message)
                 VALUES (?, ?, ?)
             """, (session_id, role, message))
+            await db.commit()
+
+    async def create_messages(self, session_id: str, messages: List[Tuple[str, str]]):
+        """批量保存聊天消息，一次连接 + 一次提交
+
+        Args:
+            session_id: 会话 ID
+            messages: [(role, message_json), ...]
+        """
+        if not messages:
+            return
+        async with aiosqlite.connect(self.db_path, timeout=5) as db:
+            await db.executemany("""
+                INSERT INTO chat_messages (session_id, role, message)
+                VALUES (?, ?, ?)
+            """, [(session_id, role, message) for role, message in messages])
             await db.commit()
 
     async def get_chat_history(self, session_id: str) -> List[Dict[str, Any]]:

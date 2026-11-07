@@ -60,10 +60,11 @@ You MUST:
 
         batch_generation_prompt = """
 
-BATCH GENERATION RULES:
-- If user needs >10 images: Generate in batches of max 10 images each
-- Complete each batch before starting next batch
-- Example for 20 images: Batch 1 (1-10) → "Batch 1 done!" → Batch 2 (11-20) → "All 20 images completed!"
+BATCH CALLS:
+- The user message may end with a marker like <quantity>5</quantity>. That marker is the exact number of images to generate, and it always overrides any number written in the plain text.
+- When the user asks for N images, emit ALL N generate_image tool calls in the SAME assistant turn. Never generate them one per turn, never split a batch of 10 or fewer, and do not print progress messages between calls.
+- Do not emit more tool calls than the requested quantity. If no quantity is specified anywhere, generate 1 image.
+- Give each call its own prompt (vary the composition a little) unless the user explicitly asks for identical copies.
 
 """
 

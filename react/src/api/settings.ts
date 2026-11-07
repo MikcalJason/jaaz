@@ -188,6 +188,21 @@ export const getFileServiceUrl = (filePath: string) => {
   return `/api/serve_file?file_path=${encodeURIComponent(filePath)}`
 }
 
+/**
+ * 获取缩略图URL（后端用 Pillow 生成并磁盘缓存）
+ *
+ * 网格/列表里直接用原图会让浏览器解码超大图片，内存与耗时都很高；
+ * 传 mtime 作为版本号后可以把缩略图长期缓存。
+ */
+export const getFileThumbnailUrl = (
+  filePath: string,
+  size = 320,
+  version?: number
+) => {
+  const v = version ? `&v=${Math.floor(version)}` : ''
+  return `/api/serve_thumbnail?file_path=${encodeURIComponent(filePath)}&size=${size}${v}`
+}
+
 // 获取文件详细信息
 export const getFileInfoApi = async (filePath: string) => {
   const response = await fetch(

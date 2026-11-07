@@ -22,6 +22,7 @@ HTTP 客户端工厂和管理器
        response = client.get("https://api.example.com/data")
 """
 
+import asyncio
 import ssl
 import certifi
 import httpx
@@ -34,6 +35,8 @@ class HttpClient:
     """HTTP 客户端工厂和管理器"""
 
     _ssl_context: Optional[ssl.SSLContext] = None
+    _shared_aiohttp_session: Optional['aiohttp.ClientSession'] = None
+    _shared_aiohttp_lock: Optional[asyncio.Lock] = None
 
     @classmethod
     def _get_ssl_context(cls) -> ssl.SSLContext:
@@ -153,3 +156,34 @@ class HttpClient:
         """
         config = cls._get_aiohttp_config(trust_env=trust_env, **kwargs)
         return aiohttp.ClientSession(**config)
+
+    # ========== 共享会话 ==========
+
+    @classmethod
+    async def get_shared_aiohttp(cls, trust_env: bool = True) -> 'aiohttp.ClientSession':
+        """获取可复用的 aiohttp 会话
+
+        批量下载图片时复用同一个连接池，避免每张图都重新建连 + TLS 握手。
+        """
+        session = cls._shared_aiohttp_session
+        if session is not None and not session.closed:
+            return session
+
+        if cls._shared_aiohttp_lock is None:
+            cls._shared_aiohttp_lock = asyncio.Lock()
+
+        async with cls._shared_aiohttp_lock:
+            session = cls._shared_aiohttp_session
+            if session is None or session.closed:
+                config = cls._get_aiohttp_config(trust_env=trust_env)
+                session = aiohttp.ClientSession(**config)
+                cls._shared_aiohttp_session = session
+            return session
+
+    @classmethod
+    async def close_shared_aiohttp(cls) -> None:
+        """关闭共享会话（应用退出时调用）"""
+        session = cls._shared_aiohttp_session
+        cls._shared_aiohttp_session = None
+        if session is not None and not session.closed:
+            await session.close()

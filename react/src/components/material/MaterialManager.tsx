@@ -18,23 +18,30 @@ import {
   Heart,
   MoreHorizontal,
   ExternalLink,
-  Info,
   X,
-  MessageCirclePlus,
 } from 'lucide-react'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import {
   browseFolderApi,
-  getMediaFilesApi,
   getFileServiceUrl,
+  getFileThumbnailUrl,
+  getFileInfoApi,
   openFolderInExplorer,
   getMyAssetsDirPath,
 } from '@/api/settings'
 import { readPNGMetadata } from '@/utils/pngMetadata'
+import { useInViewOnce } from '@/hooks/use-in-view'
 import FilePreviewModal from './FilePreviewModal'
 import { Button } from '../ui/button'
 import { eventBus } from '@/lib/event'
-import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
 
 interface FileSystemItem {
@@ -67,8 +74,109 @@ interface FileDetails extends FileSystemItem {
   }
 }
 
-// ImageModelBadge组件：异步显示PNG图片的模型信息
-function ImageModelBadge({
+// 网格/列表首次渲染数量，滚动到底部再增量加载，避免一次挂载上千个 DOM 节点
+const PAGE_SIZE = 120
+// 左侧文件树每层首次渲染的节点数
+const TREE_PAGE_SIZE = 60
+
+const MODEL_KEYS = [
+  'model',
+  'Model',
+  'checkpoint',
+  'Checkpoint',
+  'model_name',
+  'Model Name',
+  'sd_model_name',
+  'Model used',
+  'model_used',
+]
+
+const PARAM_KEYS = ['parameters', 'Parameters', 'params', 'generation_params']
+
+// Intl 格式化器创建成本较高，模块级复用
+const dateTimeFormatter = new Intl.DateTimeFormat()
+
+function formatFileSize(bytes: number) {
+  if (!bytes) return '0 Bytes'
+  const k = 1024
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
+function formatDate(timestamp: number) {
+  if (!timestamp) return ''
+  return dateTimeFormatter.format(new Date(timestamp * 1000))
+}
+
+function getFileIcon(type: string, className: string = 'w-4 h-4') {
+  switch (type) {
+    case 'folder':
+      return <Folder className={className} />
+    case 'image':
+      return <Image className={`${className} text-blue-500`} />
+    case 'video':
+      return <Play className={`${className} text-red-500`} />
+    case 'audio':
+      return <Music className={`${className} text-green-500`} />
+    case 'document':
+      return <FileText className={`${className} text-orange-500`} />
+    case 'archive':
+      return <Archive className={`${className} text-purple-500`} />
+    case 'code':
+      return <Code className={`${className} text-yellow-500`} />
+    default:
+      return <File className={className} />
+  }
+}
+
+function mediaFromItems(items: FileSystemItem[]): FileSystemItem[] {
+  return items
+    .filter(
+      (item) =>
+        !item.is_directory && (item.type === 'image' || item.type === 'video')
+    )
+    .sort((a, b) => b.mtime - a.mtime)
+}
+
+function extractModelName(metadata: Record<string, unknown>): string | null {
+  let extracted: unknown = null
+
+  for (const key of MODEL_KEYS) {
+    if (metadata[key]) {
+      extracted = metadata[key]
+      break
+    }
+  }
+
+  // 如果没有找到标准的模型字段，尝试从参数字符串中推断
+  if (!extracted) {
+    for (const key of PARAM_KEYS) {
+      const value = metadata[key]
+      if (typeof value === 'string') {
+        const match = value.match(/(?:model|Model):\s*([^,\n]+)/)
+        if (match) {
+          extracted = match[1].trim()
+          break
+        }
+      }
+    }
+  }
+
+  if (!extracted) return null
+
+  let clean = String(extracted)
+  if (clean.includes('/')) clean = clean.split('/').pop() || clean
+  if (clean.includes('\\')) clean = clean.split('\\').pop() || clean
+  clean = clean.replace(/\.(ckpt|safetensors|pt|pth)$/i, '')
+  return clean || null
+}
+
+/**
+ * 图片模型徽标：只有卡片进入视口后才读取 PNG metadata，
+ * 避免打开目录时同时发起上百个文件读取请求。
+ */
+const ImageModelBadge = memo(function ImageModelBadge({
   filePath,
   fileName,
   variant = 'grid',
@@ -77,140 +185,220 @@ function ImageModelBadge({
   fileName: string
   variant?: 'grid' | 'list'
 }) {
+  const { ref, inView } = useInViewOnce<HTMLDivElement>()
   const [modelInfo, setModelInfo] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
+  const isPng = fileName.toLowerCase().endsWith('.png')
 
   useEffect(() => {
-    // 只处理PNG文件
-    if (!fileName.toLowerCase().endsWith('.png')) {
-      return
-    }
+    if (!inView || !isPng) return
 
-    const loadModelInfo = async () => {
-      setIsLoading(true)
-      try {
-        const result = await readPNGMetadata(getFileServiceUrl(filePath))
-        if (result.success && result.has_metadata) {
-          // 尝试提取模型信息，优先级顺序
-          const metadata = result.metadata
-          const modelKeys = [
-            'model',
-            'Model',
-            'checkpoint',
-            'Checkpoint',
-            'model_name',
-            'Model Name',
-            'sd_model_name',
-            'Model used',
-            'model_used',
-          ]
-
-          let extractedModel = null
-          for (const key of modelKeys) {
-            if (metadata[key]) {
-              extractedModel = metadata[key]
-              break
-            }
-          }
-
-          // 如果没有找到标准的模型字段，尝试从其他字段推断
-          if (!extractedModel) {
-            // 检查是否有参数字段包含模型信息
-            const paramKeys = [
-              'parameters',
-              'Parameters',
-              'params',
-              'generation_params',
-            ]
-            for (const key of paramKeys) {
-              if (metadata[key] && typeof metadata[key] === 'string') {
-                const paramStr = metadata[key]
-                // 尝试从参数字符串中提取模型名
-                const modelMatch = paramStr.match(
-                  /(?:model|Model):\s*([^,\n]+)/i
-                )
-                if (modelMatch) {
-                  extractedModel = modelMatch[1].trim()
-                  break
-                }
-              }
-            }
-          }
-
-          if (extractedModel) {
-            // 清理模型名称，去掉路径和扩展名
-            let cleanModel = String(extractedModel)
-            if (cleanModel.includes('/')) {
-              cleanModel = cleanModel.split('/').pop() || cleanModel
-            }
-            if (cleanModel.includes('\\')) {
-              cleanModel = cleanModel.split('\\').pop() || cleanModel
-            }
-            // 移除常见的文件扩展名
-            cleanModel = cleanModel.replace(/\.(ckpt|safetensors|pt|pth)$/i, '')
-
-            setModelInfo(cleanModel)
-          }
-        }
-      } catch (error) {
-        console.error('Error loading model info for', fileName, error)
-      } finally {
-        setIsLoading(false)
+    let cancelled = false
+    readPNGMetadata(getFileServiceUrl(filePath)).then((result) => {
+      if (cancelled) return
+      if (result.success && result.has_metadata) {
+        const modelName = extractModelName(result.metadata)
+        if (modelName) setModelInfo(modelName)
       }
+    })
+
+    return () => {
+      cancelled = true
     }
+  }, [inView, isPng, filePath])
 
-    loadModelInfo()
-  }, [filePath, fileName])
+  if (!isPng) return null
 
-  if (!fileName.toLowerCase().endsWith('.png')) {
-    return null
-  }
-
-  const gridStyles =
-    'absolute top-2 left-2 bg-blue-600/90 backdrop-blur-sm text-white text-xs px-2 py-1 rounded-full max-w-[calc(100%-1rem)] truncate shadow-lg'
-  const listStyles =
-    'bg-blue-600/90 backdrop-blur-sm text-white text-[10px] px-1.5 py-0.5 rounded-full max-w-16 truncate shadow-lg'
-
-  if (isLoading) {
-    return (
-      <div
-        className={
-          variant === 'grid'
-            ? 'absolute top-2 left-2 bg-gray-500/80 backdrop-blur-sm text-white text-xs px-2 py-1 rounded-full'
-            : 'bg-gray-500/80 backdrop-blur-sm text-white text-[10px] px-1.5 py-0.5 rounded-full'
-        }
-      >
-        <div className="flex items-center gap-1">
-          <div
-            className={`border border-white border-t-transparent rounded-full animate-spin ${variant === 'grid' ? 'w-3 h-3' : 'w-2 h-2'}`}
-          ></div>
-          {variant === 'grid' && <span>Loading...</span>}
-        </div>
-      </div>
-    )
-  }
+  const position =
+    variant === 'grid'
+      ? 'absolute top-2 left-2 z-10'
+      : 'absolute -top-1 -right-1 z-10'
 
   if (!modelInfo) {
-    return null
+    // 空占位也保留 1px 面积，保证 IntersectionObserver 能触发
+    return <div ref={ref} className={`${position} w-px h-px`} />
   }
 
   return (
-    <div className={variant === 'grid' ? gridStyles : listStyles}>
+    <div
+      ref={ref}
+      className={`${position} ${
+        variant === 'grid'
+          ? 'bg-blue-600/90 backdrop-blur-sm text-white text-xs px-2 py-1 rounded-full max-w-[calc(100%-1rem)] truncate shadow-lg'
+          : 'bg-blue-600/90 backdrop-blur-sm text-white text-[10px] px-1.5 py-0.5 rounded-full max-w-16 truncate shadow-lg'
+      }`}
+    >
       <span title={modelInfo}>{modelInfo}</span>
     </div>
   )
+})
+
+interface MediaItemProps {
+  file: FileSystemItem
+  selected: boolean
+  onOpen: (file: FileSystemItem) => void
+  onPreview: (file: FileSystemItem) => void
+  onAddToChat?: (file: FileSystemItem, event?: React.MouseEvent) => void
 }
+
+const MediaCard = memo(function MediaCard({
+  file,
+  selected,
+  onOpen,
+}: MediaItemProps) {
+  const [failed, setFailed] = useState(false)
+  const thumbnailUrl = useMemo(
+    () => getFileThumbnailUrl(file.path, 400, file.mtime),
+    [file.path, file.mtime]
+  )
+
+
+  return (
+    <div
+      className={`group relative bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden border cursor-pointer ${
+        selected
+          ? 'border-blue-500 ring-2 ring-blue-200 dark:ring-blue-800'
+          : 'border-gray-200 dark:border-gray-700'
+      }`}
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpen(file)
+      }}
+    >
+      <div className="aspect-square bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 flex items-center justify-center overflow-hidden relative">
+        {file.type === 'image' && (
+          <ImageModelBadge
+            filePath={file.path}
+            fileName={file.name}
+            variant="grid"
+          />
+        )}
+
+        {file.type === 'image' && !failed ? (
+          <img
+            src={thumbnailUrl}
+            alt={file.name}
+            loading="lazy"
+            decoding="async"
+            draggable={false}
+            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+            onError={() => setFailed(true)}
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center text-gray-400">
+            {getFileIcon(file.type, 'w-8 h-8')}
+            <span className="text-xs mt-1">{file.type.toUpperCase()}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="p-3">
+        <div className="text-sm font-medium truncate" title={file.name}>
+          {file.name}
+        </div>
+        <div className="flex justify-between items-center mt-2 text-xs text-gray-500">
+          <span>{formatFileSize(file.size || 0)}</span>
+          <span>{formatDate(file.mtime)}</span>
+        </div>
+      </div>
+    </div>
+  )
+})
+
+const MediaRow = memo(function MediaRow({
+  file,
+  selected,
+  onOpen,
+  onPreview,
+  onAddToChat,
+}: MediaItemProps) {
+  const [failed, setFailed] = useState(false)
+  const thumbnailUrl = useMemo(
+    () => getFileThumbnailUrl(file.path, 128, file.mtime),
+    [file.path, file.mtime]
+  )
+  return (
+    <div
+      className={`flex items-center gap-4 p-3 bg-white dark:bg-gray-800 rounded-lg border hover:shadow-md transition-shadow min-w-0 cursor-pointer ${
+        selected
+          ? 'border-blue-500 ring-2 ring-blue-200 dark:ring-blue-800'
+          : 'border-gray-200 dark:border-gray-700'
+      }`}
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpen(file)
+      }}
+    >
+      <div className="w-12 h-12 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0 relative">
+        {file.type === 'image' && (
+          <ImageModelBadge
+            filePath={file.path}
+            fileName={file.name}
+            variant="list"
+          />
+        )}
+
+        {file.type === 'image' && !failed ? (
+          <img
+            src={thumbnailUrl}
+            alt={file.name}
+            loading="lazy"
+            decoding="async"
+            draggable={false}
+            className="w-full h-full object-cover"
+            onError={() => setFailed(true)}
+          />
+        ) : (
+          getFileIcon(file.type)
+        )}
+      </div>
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <div className="font-medium truncate">{file.name}</div>
+        <div className="text-sm text-gray-500 flex items-center gap-4 overflow-hidden">
+          <span className="whitespace-nowrap">
+            {formatFileSize(file.size || 0)}
+          </span>
+          <span className="whitespace-nowrap">{formatDate(file.mtime)}</span>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onPreview(file)
+          }}
+          className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+          title="预览"
+        >
+          <Eye className="w-4 h-4" />
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onAddToChat?.(file)
+          }}
+          className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+          title="添加到聊天"
+        >
+          <Heart className="w-4 h-4" />
+        </button>
+        <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+          <MoreHorizontal className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  )
+})
 
 export default function MaterialManager() {
   const [currentPath, setCurrentPath] = useState<string>('')
-  const [pathHistory, setPathHistory] = useState<string[]>([])
   const [items, setItems] = useState<FileSystemItem[]>([])
   const [mediaFiles, setMediaFiles] = useState<FileSystemItem[]>([])
   const [selectedFolder, setSelectedFolder] = useState<FileSystemItem | null>(
     null
   )
   const [selectedFile, setSelectedFile] = useState<FileDetails | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [treeLoading, setTreeLoading] = useState(false)
+  const [mediaLoading, setMediaLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [searchTerm, setSearchTerm] = useState('')
@@ -218,6 +406,9 @@ export default function MaterialManager() {
   const [folderContents, setFolderContents] = useState<
     Map<string, FileSystemItem[]>
   >(new Map())
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  // 每个目录已展开显示的条目数，key 为父目录路径
+  const [treeLimits, setTreeLimits] = useState<Record<string, number>>({})
   const [previewModal, setPreviewModal] = useState<{
     isOpen: boolean
     filePath: string
@@ -229,106 +420,151 @@ export default function MaterialManager() {
     fileName: '',
     fileType: '',
   })
+
   const myAssetsPath = useRef<string>('')
+  const folderContentsRef = useRef<Map<string, FileSystemItem[]>>(new Map())
+  const selectedFolderRef = useRef<FileSystemItem | null>(null)
+  const requestSeq = useRef(0)
+  const initialized = useRef(false)
+  const loadMoreRef = useRef<HTMLDivElement | null>(null)
   const { t } = useTranslation()
 
-  // 初始化时加载用户目录
-  useEffect(() => {
-    loadFolder('')
-  }, [])
-
-  // 获取图片尺寸的函数
-  const getImageDimensions = useCallback(
-    (imagePath: string): Promise<{ width: number; height: number }> => {
-      return new Promise((resolve, reject) => {
-        const img = new window.Image()
-        img.onload = () => {
-          resolve({ width: img.naturalWidth, height: img.naturalHeight })
-        }
-        img.onerror = reject
-        img.src = getFileServiceUrl(imagePath)
-      })
+  const setFolderItems = useCallback(
+    (path: string, children: FileSystemItem[]) => {
+      folderContentsRef.current.set(path, children)
+      setFolderContents(new Map(folderContentsRef.current))
     },
     []
   )
 
-  const loadFolder = useCallback(
+  // 载入树根目录（家目录）
+  const loadRoot = useCallback(
     async (path: string = '') => {
-      setLoading(true)
+      setTreeLoading(true)
       setError(null)
 
       try {
         const result: BrowseResult = await browseFolderApi(path)
         setCurrentPath(result.current_path)
         setItems(result.items)
-
-        // 将当前路径的内容添加到folderContents中
-        setFolderContents((prev) =>
-          new Map(prev).set(result.current_path, result.items)
-        )
-
-        // 如果选择了文件夹，加载媒体文件
-        if (selectedFolder && selectedFolder.is_directory) {
-          try {
-            const mediaResult = await getMediaFilesApi(selectedFolder.path)
-            setMediaFiles(mediaResult)
-          } catch (err) {
-            console.error('Failed to load media files:', err)
-          }
-        }
+        setFolderItems(result.current_path, result.items)
       } catch (err) {
         setError('Failed to load folder')
         console.error('Error loading folder:', err)
       } finally {
-        setLoading(false)
+        setTreeLoading(false)
       }
     },
-    [selectedFolder]
+    [setFolderItems]
   )
 
-  const loadFolderContents = useCallback(async (folderPath: string) => {
-    try {
-      const result: BrowseResult = await browseFolderApi(folderPath)
-      setFolderContents((prev) => new Map(prev).set(folderPath, result.items))
-      return result.items
-    } catch (err) {
-      console.error('Failed to load folder contents:', err)
-      return []
-    }
-  }, [])
+  /**
+   * 打开目录：只发一次目录列表请求。
+   * 之前这里先请求 browse_filesystem 再请求 get_media_files，
+   * 同一个目录被完整扫描两遍，大目录下会明显卡顿。
+   */
+  const openFolder = useCallback(
+    async (
+      folder: FileSystemItem,
+      options?: { toggle?: boolean; refresh?: boolean }
+    ) => {
+      selectedFolderRef.current = folder
+      setSelectedFolder(folder)
+      setSelectedFile(null)
+      setVisibleCount(PAGE_SIZE)
 
-  const handleFolderClick = useCallback(
-    async (folder: FileSystemItem) => {
-      if (folder.is_directory) {
-        setSelectedFolder(folder)
-
-        // Toggle expansion state
+      if (options?.toggle) {
         setExpandedFolders((prev) => {
-          const newSet = new Set(prev)
-          if (newSet.has(folder.path)) {
-            newSet.delete(folder.path)
-          } else {
-            newSet.add(folder.path)
-          }
-          return newSet
+          const next = new Set(prev)
+          if (next.has(folder.path)) next.delete(folder.path)
+          else next.add(folder.path)
+          return next
         })
+      }
 
-        // Load folder contents if not already loaded
-        if (!folderContents.has(folder.path)) {
-          await loadFolderContents(folder.path)
-        }
+      const cached = options?.refresh
+        ? undefined
+        : folderContentsRef.current.get(folder.path)
 
-        try {
-          const mediaResult = await getMediaFilesApi(folder.path)
-          setMediaFiles(mediaResult)
-        } catch (err) {
+      if (cached) {
+        setMediaFiles(mediaFromItems(cached))
+        setMediaLoading(false)
+        return
+      }
+
+      const seq = ++requestSeq.current
+      setMediaLoading(true)
+      setMediaFiles([])
+
+      try {
+        const result: BrowseResult = await browseFolderApi(folder.path)
+        if (seq !== requestSeq.current) return
+        setFolderItems(result.current_path, result.items)
+        setMediaFiles(mediaFromItems(result.items))
+      } catch (err) {
+        if (seq === requestSeq.current) {
           console.error('Failed to load media files:', err)
           setMediaFiles([])
         }
+      } finally {
+        if (seq === requestSeq.current) setMediaLoading(false)
       }
     },
-    [folderContents, loadFolderContents]
+    [setFolderItems]
   )
+
+  const handleFolderClick = useCallback(
+    (folder: FileSystemItem) => {
+      if (!folder.is_directory) return
+      void openFolder(folder, { toggle: true })
+    },
+    [openFolder]
+  )
+
+  const handleMyAssets = useCallback(async () => {
+    try {
+      if (!myAssetsPath.current) {
+        const result = await getMyAssetsDirPath()
+        if (!result.success) {
+          console.error('Failed to get My Assets directory path:', result.error)
+          return
+        }
+        myAssetsPath.current = result.path
+      }
+
+      await openFolder(
+        {
+          name: t('canvas:myAssets', 'My Assets'),
+          path: myAssetsPath.current,
+          type: 'folder',
+          mtime: Date.now() / 1000,
+          is_directory: true,
+          is_media: false,
+          has_thumbnail: false,
+        },
+        { refresh: true }
+      )
+    } catch (error) {
+      console.error('Failed to load My Assets folder:', error)
+    }
+  }, [openFolder, t])
+
+  const handleRefresh = useCallback(() => {
+    const folder = selectedFolderRef.current
+    if (folder?.is_directory) {
+      void openFolder(folder, { refresh: true })
+      return
+    }
+    void loadRoot(currentPath)
+  }, [openFolder, loadRoot, currentPath])
+
+  // 首次进入：并行加载树根目录与 My Assets
+  useEffect(() => {
+    if (initialized.current) return
+    initialized.current = true
+    void loadRoot('')
+    void handleMyAssets()
+  }, [loadRoot, handleMyAssets])
 
   const handlePreviewFile = useCallback((file: FileSystemItem) => {
     if (file.is_media) {
@@ -350,44 +586,40 @@ export default function MaterialManager() {
     })
   }, [])
 
-  const handleFileClick = useCallback(
-    async (file: FileSystemItem) => {
-      // if (!file.is_media) return
+  const handleFileClick = useCallback(async (file: FileSystemItem) => {
+    setSelectedFile({ ...file })
 
-      const fileDetails: FileDetails = { ...file }
+    if (file.type !== 'image') return
 
-      // 如果是图片，获取尺寸信息
-      if (file.type === 'image') {
-        try {
-          const dimensions = await getImageDimensions(file.path)
-          fileDetails.dimensions = dimensions
-        } catch (error) {
-          console.error('Failed to get image dimensions:', error)
-        }
-
-        // 如果是PNG文件，获取metadata信息
-        if (file.path.toLowerCase().endsWith('.png')) {
-          try {
-            const pngMetadata = await readPNGMetadata(
-              getFileServiceUrl(file.path)
-            )
-            fileDetails.pngMetadata = pngMetadata
-          } catch (error) {
-            console.error('Failed to get PNG metadata:', error)
-          }
-        }
+    // 宽高由后端读图片头（毫秒级），不用再把整张原图下载到浏览器解析
+    try {
+      const info = await getFileInfoApi(file.path)
+      if (info?.dimensions) {
+        setSelectedFile((prev) =>
+          prev && prev.path === file.path
+            ? { ...prev, dimensions: info.dimensions }
+            : prev
+        )
       }
+    } catch (err) {
+      console.error('Failed to get image info:', err)
+    }
 
-      setSelectedFile(fileDetails)
-    },
-    [getImageDimensions]
-  )
+    if (!file.path.toLowerCase().endsWith('.png')) return
+
+    try {
+      const pngMetadata = await readPNGMetadata(getFileServiceUrl(file.path))
+      setSelectedFile((prev) =>
+        prev && prev.path === file.path ? { ...prev, pngMetadata } : prev
+      )
+    } catch (err) {
+      console.error('Failed to get PNG metadata:', err)
+    }
+  }, [])
 
   const handleAddToChat = useCallback(
     (file: FileSystemItem, event?: React.MouseEvent) => {
-      if (event) {
-        event.stopPropagation()
-      }
+      if (event) event.stopPropagation()
       eventBus.emit('Material::AddImagesToChat', [
         {
           filePath: file.path,
@@ -411,86 +643,49 @@ export default function MaterialManager() {
     }
   }, [selectedFolder])
 
+  const filteredItems = useMemo(() => {
+    const term = searchTerm.toLowerCase()
+    if (!term) return items
+    return items.filter((item) => item.name.toLowerCase().includes(term))
+  }, [items, searchTerm])
+
+  const filteredMediaFiles = useMemo(() => {
+    const term = searchTerm.toLowerCase()
+    if (!term) return mediaFiles
+    return mediaFiles.filter((file) => file.name.toLowerCase().includes(term))
+  }, [mediaFiles, searchTerm])
+
+  const visibleMediaFiles = useMemo(
+    () => filteredMediaFiles.slice(0, visibleCount),
+    [filteredMediaFiles, visibleCount]
+  )
+
+  // 滚动到底部时增量渲染，避免一次性挂载上千张图片
   useEffect(() => {
-    // by default, load my assets folder when open page
-    handleMyAssets()
-  }, [])
+    if (visibleCount >= filteredMediaFiles.length) return
+    const target = loadMoreRef.current
+    if (!target || typeof IntersectionObserver === 'undefined') return
 
-  const handleMyAssets = useCallback(async () => {
-    try {
-      const result = await getMyAssetsDirPath()
-      if (result.success) {
-        myAssetsPath.current = result.path
-        const myAssetsFolder: FileSystemItem = {
-          name: t('canvas:myAssets', 'My Assets'),
-          path: result.path,
-          type: 'folder',
-          mtime: Date.now() / 1000,
-          is_directory: true,
-          is_media: false,
-          has_thumbnail: false,
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisibleCount((prev) => prev + PAGE_SIZE)
         }
-        await handleFolderClick(myAssetsFolder)
-      } else {
-        console.error('Failed to get My Assets directory path:', result.error)
-      }
-    } catch (error) {
-      console.error('Failed to load My Assets folder:', error)
-    }
-  }, [handleFolderClick])
+      },
+      { rootMargin: '600px 0px' }
+    )
 
-  const getFileIcon = useCallback(
-    (type: string, className: string = 'w-4 h-4') => {
-      switch (type) {
-        case 'folder':
-          return <Folder className={className} />
-        case 'image':
-          return <Image className={`${className} text-blue-500`} />
-        case 'video':
-          return <Play className={`${className} text-red-500`} />
-        case 'audio':
-          return <Music className={`${className} text-green-500`} />
-        case 'document':
-          return <FileText className={`${className} text-orange-500`} />
-        case 'archive':
-          return <Archive className={`${className} text-purple-500`} />
-        case 'code':
-          return <Code className={`${className} text-yellow-500`} />
-        default:
-          return <File className={className} />
-      }
-    },
-    []
-  )
-
-  const formatFileSize = useCallback((bytes: number) => {
-    if (bytes === 0) return '0 Bytes'
-    const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }, [])
-
-  const formatDate = useCallback((timestamp: number) => {
-    return new Date(timestamp * 1000).toLocaleString()
-  }, [])
-
-  const filteredItems = items.filter((item) =>
-    item.name.toLowerCase().includes(searchTerm.toLowerCase())
-  )
-
-  const filteredMediaFiles = mediaFiles.filter((file) =>
-    file.name.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [visibleCount, filteredMediaFiles.length])
 
   // 递归搜索所有文件夹内容
   const searchInFolderContents = useCallback(
-    (items: FileSystemItem[], term: string): FileSystemItem[] => {
-      if (!term) return items
+    (contents: FileSystemItem[], term: string): FileSystemItem[] => {
+      if (!term) return contents
 
-      return items.filter((item) => {
-        const nameMatches = item.name.toLowerCase().includes(term.toLowerCase())
-        if (nameMatches) return true
+      return contents.filter((item) => {
+        if (item.name.toLowerCase().includes(term.toLowerCase())) return true
 
         // 如果是文件夹且已展开，搜索子内容
         if (item.is_directory && expandedFolders.has(item.path)) {
@@ -515,242 +710,169 @@ export default function MaterialManager() {
   )
 
   const renderFileTree = useCallback(
-    (items: FileSystemItem[], depth = 0) => {
-      return items.map((item) => (
-        <div key={item.path} className={`select-none`}>
-          <div
-            className={`flex items-center gap-2 px-3 py-1 rounded-lg cursor-pointer transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-800 ${
-              selectedFolder?.path === item.path && item.is_directory
-                ? 'bg-blue-50 dark:bg-blue-950 border-l-4 border-blue-500'
-                : item.is_media && !item.is_directory
-                  ? 'hover:bg-green-50 dark:hover:bg-green-950'
-                  : ''
-            }`}
-            style={{ paddingLeft: `${12 + depth * 16}px` }}
-            onClick={() =>
-              item.is_directory
-                ? handleFolderClick(item)
-                : handlePreviewFile(item)
-            }
-          >
-            {item.is_directory && (
-              <button className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors">
-                {expandedFolders.has(item.path) ? (
-                  <ChevronDown className="w-3 h-3" />
-                ) : (
-                  <ChevronRight className="w-3 h-3" />
+    (
+      treeItems: FileSystemItem[],
+      depth = 0,
+      parentKey = 'root'
+    ): ReactNode => {
+      // 每层节点分批渲染：家目录里有几千个条目时，不必一次挂载
+      const limit = treeLimits[parentKey] ?? TREE_PAGE_SIZE
+      const shownItems =
+        treeItems.length > limit ? treeItems.slice(0, limit) : treeItems
+      const hiddenCount = treeItems.length - shownItems.length
+
+      return (
+        <>
+          {shownItems.map((item) => {
+            const isExpanded =
+              item.is_directory && expandedFolders.has(item.path)
+            // 只计算一次，避免同一节点重复过滤
+            const childItems = isExpanded
+              ? getFilteredFolderContents(item.path)
+              : []
+
+            return (
+              <div key={item.path} className="select-none">
+                <div
+                  className={`flex items-center gap-2 px-3 py-1 rounded-lg cursor-pointer transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-800 ${
+                    selectedFolder?.path === item.path && item.is_directory
+                      ? 'bg-blue-50 dark:bg-blue-950 border-l-4 border-blue-500'
+                      : item.is_media && !item.is_directory
+                        ? 'hover:bg-green-50 dark:hover:bg-green-950'
+                        : ''
+                  }`}
+                  style={{ paddingLeft: `${12 + depth * 16}px` }}
+                  onClick={() =>
+                    item.is_directory
+                      ? handleFolderClick(item)
+                      : handlePreviewFile(item)
+                  }
+                >
+                  {item.is_directory && (
+                    <button className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors">
+                      {isExpanded ? (
+                        <ChevronDown className="w-3 h-3" />
+                      ) : (
+                        <ChevronRight className="w-3 h-3" />
+                      )}
+                    </button>
+                  )}
+
+                  {!item.is_directory && (
+                    <div className="w-5 h-5 flex items-center justify-center">
+                      <div className="w-3 h-3"></div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    {item.is_directory ? (
+                      isExpanded ? (
+                        <FolderOpen className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                      ) : (
+                        <Folder className="w-4 h-4 text-gray-600 flex-shrink-0" />
+                      )
+                    ) : (
+                      getFileIcon(item.type)
+                    )}
+                    <span
+                      className="text-sm font-medium truncate"
+                      title={item.name}
+                    >
+                      {item.name}
+                    </span>
+                  </div>
+
+                  {/* 文件大小显示 */}
+                  {!item.is_directory && item.size && (
+                    <span className="text-xs text-gray-400 ml-2">
+                      {formatFileSize(item.size)}
+                    </span>
+                  )}
+                </div>
+
+                {/* 递归渲染子文件夹和文件 */}
+                {isExpanded && childItems.length > 0 && (
+                  <div className="ml-2">
+                    {renderFileTree(childItems, depth + 1, item.path)}
+                  </div>
                 )}
-              </button>
-            )}
-
-            {!item.is_directory && (
-              <div className="w-5 h-5 flex items-center justify-center">
-                <div className="w-3 h-3"></div>
               </div>
-            )}
+            )
+          })}
 
-            <div className="flex items-center gap-2 flex-1">
-              {item.is_directory ? (
-                expandedFolders.has(item.path) ? (
-                  <FolderOpen className="w-4 h-4 text-blue-600" />
-                ) : (
-                  <Folder className="w-4 h-4 text-gray-600" />
-                )
-              ) : (
-                getFileIcon(item.type)
-              )}
-              <span className="text-sm font-medium truncate" title={item.name}>
-                {item.name}
-              </span>
-            </div>
-
-            {/* 文件大小显示 */}
-            {!item.is_directory && item.size && (
-              <span className="text-xs text-gray-400 ml-2">
-                {formatFileSize(item.size)}
-              </span>
-            )}
-          </div>
-
-          {/* 递归渲染子文件夹和文件 */}
-          {item.is_directory && expandedFolders.has(item.path) && (
-            <div className="ml-2">
-              {getFilteredFolderContents(item.path).length > 0 &&
-                renderFileTree(getFilteredFolderContents(item.path), depth + 1)}
-            </div>
+          {hiddenCount > 0 && (
+            <button
+              onClick={() =>
+                setTreeLimits((prev) => ({
+                  ...prev,
+                  [parentKey]:
+                    (prev[parentKey] ?? TREE_PAGE_SIZE) + TREE_PAGE_SIZE,
+                }))
+              }
+              className="w-full text-left text-xs text-blue-600 hover:underline py-1"
+              style={{ paddingLeft: `${12 + depth * 16}px` }}
+            >
+              {`加载更多（剩余 ${hiddenCount}）`}
+            </button>
           )}
-        </div>
-      ))
+        </>
+      )
     },
     [
       selectedFolder,
       expandedFolders,
-      folderContents,
       handleFolderClick,
       handlePreviewFile,
-      getFileIcon,
-      formatFileSize,
       getFilteredFolderContents,
+      treeLimits,
     ]
   )
 
-  const renderMediaGrid = useCallback(() => {
-    return (
+  const renderMediaGrid = useCallback(
+    () => (
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-        {filteredMediaFiles.map((file) => (
-          <div
+        {visibleMediaFiles.map((file) => (
+          <MediaCard
             key={file.path}
-            className={`group relative bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden border cursor-pointer ${
-              selectedFile?.path === file.path
-                ? 'border-blue-500 ring-2 ring-blue-200 dark:ring-blue-800'
-                : 'border-gray-200 dark:border-gray-700'
-            }`}
-            onClick={() => handleFileClick(file)}
-          >
-            <div className="aspect-square bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 flex items-center justify-center overflow-hidden relative">
-              {/* Model Badge for PNG images */}
-              <ImageModelBadge filePath={file.path} fileName={file.name} />
-
-              {file.type === 'image' ? (
-                <img
-                  src={getFileServiceUrl(file.path)}
-                  alt={file.name}
-                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                  onError={(e) => {
-                    e.currentTarget.style.display = 'none'
-                    e.currentTarget.nextElementSibling?.classList.remove(
-                      'hidden'
-                    )
-                  }}
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center text-gray-400">
-                  {getFileIcon(file.type, 'w-8 h-8')}
-                  <span className="text-xs mt-1">
-                    {file.type.toUpperCase()}
-                  </span>
-                </div>
-              )}
-              <div className="hidden flex flex-col items-center justify-center text-gray-400">
-                {getFileIcon(file.type, 'w-8 h-8')}
-                <span className="text-xs mt-1">{file.type.toUpperCase()}</span>
-              </div>
-            </div>
-
-            <div className="p-3">
-              <div className="text-sm font-medium truncate" title={file.name}>
-                {file.name}
-              </div>
-              <div className="flex justify-between items-center mt-2 text-xs text-gray-500">
-                <span>{formatFileSize(file.size || 0)}</span>
-                <span>{formatDate(file.mtime)}</span>
-              </div>
-            </div>
-          </div>
+            file={file}
+            selected={selectedFile?.path === file.path}
+            onOpen={handleFileClick}
+            onPreview={handlePreviewFile}
+          />
         ))}
       </div>
-    )
-  }, [
-    filteredMediaFiles,
-    selectedFile,
-    getFileIcon,
-    formatFileSize,
-    formatDate,
-    handlePreviewFile,
-    handleFileClick,
-    handleAddToChat,
-  ])
+    ),
+    [
+      visibleMediaFiles,
+      selectedFile?.path,
+      handleFileClick,
+      handlePreviewFile,
+    ]
+  )
 
-  const renderMediaList = useCallback(() => {
-    return (
+  const renderMediaList = useCallback(
+    () => (
       <div className="space-y-2 w-full overflow-hidden">
-        {filteredMediaFiles.map((file) => (
-          <div
+        {visibleMediaFiles.map((file) => (
+          <MediaRow
             key={file.path}
-            className={`flex items-center gap-4 p-3 bg-white dark:bg-gray-800 rounded-lg border hover:shadow-md transition-shadow min-w-0 cursor-pointer ${
-              selectedFile?.path === file.path
-                ? 'border-blue-500 ring-2 ring-blue-200 dark:ring-blue-800'
-                : 'border-gray-200 dark:border-gray-700'
-            }`}
-            onClick={() => handleFileClick(file)}
-          >
-            <div className="w-12 h-12 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0 relative">
-              {/* Model Badge for PNG images in list view */}
-              {file.type === 'image' &&
-                file.name.toLowerCase().endsWith('.png') && (
-                  <div className="absolute -top-1 -right-1 z-10">
-                    <ImageModelBadge
-                      filePath={file.path}
-                      fileName={file.name}
-                      variant="list"
-                    />
-                  </div>
-                )}
-
-              {file.type === 'image' ? (
-                <img
-                  src={getFileServiceUrl(file.path)}
-                  alt={file.name}
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    e.currentTarget.style.display = 'none'
-                    e.currentTarget.nextElementSibling?.classList.remove(
-                      'hidden'
-                    )
-                  }}
-                />
-              ) : (
-                getFileIcon(file.type)
-              )}
-              <div className="hidden">{getFileIcon(file.type)}</div>
-            </div>
-            <div className="flex-1 min-w-0 overflow-hidden">
-              <div className="font-medium truncate">{file.name}</div>
-              <div className="text-sm text-gray-500 flex items-center gap-4 overflow-hidden">
-                <span className="whitespace-nowrap">
-                  {formatFileSize(file.size || 0)}
-                </span>
-                <span className="whitespace-nowrap">
-                  {formatDate(file.mtime)}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handlePreviewFile(file)
-                }}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                title="预览"
-              >
-                <Eye className="w-4 h-4" />
-              </button>
-              <button
-                onClick={(e) => handleAddToChat(file, e)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                title="添加到聊天"
-              >
-                <Heart className="w-4 h-4" />
-              </button>
-              <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
-                <MoreHorizontal className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
+            file={file}
+            selected={selectedFile?.path === file.path}
+            onOpen={handleFileClick}
+            onPreview={handlePreviewFile}
+            onAddToChat={handleAddToChat}
+          />
         ))}
       </div>
-    )
-  }, [
-    filteredMediaFiles,
-    selectedFile,
-    getFileIcon,
-    formatFileSize,
-    formatDate,
-    handlePreviewFile,
-    handleFileClick,
-    handleAddToChat,
-  ])
+    ),
+    [
+      visibleMediaFiles,
+      selectedFile?.path,
+      handleFileClick,
+      handlePreviewFile,
+      handleAddToChat,
+    ]
+  )
 
   const renderFileDetailsPanel = useCallback(() => {
     if (!selectedFile) return null
@@ -767,13 +889,18 @@ export default function MaterialManager() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* 文件预览 */}
+          {/* 文件预览：用 1024 缩略图代替原图，避免解码几十 MB 的大图 */}
           <div className="space-y-4">
             <div className="aspect-video bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden flex items-center justify-center">
               {selectedFile.type === 'image' ? (
                 <img
-                  src={getFileServiceUrl(selectedFile.path)}
+                  src={getFileThumbnailUrl(
+                    selectedFile.path,
+                    1024,
+                    selectedFile.mtime
+                  )}
                   alt={selectedFile.name}
+                  decoding="async"
                   className="max-w-full max-h-full object-contain"
                 />
               ) : (
@@ -896,14 +1023,7 @@ export default function MaterialManager() {
         </div>
       </div>
     )
-  }, [
-    selectedFile,
-    getFileIcon,
-    formatFileSize,
-    formatDate,
-    handleAddToChat,
-    handlePreviewFile,
-  ])
+  }, [selectedFile, t])
 
   return (
     <div className="flex h-full bg-gray-50 dark:bg-gray-900 w-full overflow-hidden">
@@ -914,9 +1034,7 @@ export default function MaterialManager() {
           {/* My Assets Button */}
           <Button
             variant={
-              selectedFolder?.path === myAssetsPath.current
-                ? 'default'
-                : 'ghost'
+              selectedFolder?.path === myAssetsPath.current ? 'default' : 'ghost'
             }
             onClick={handleMyAssets}
             className="w-full justify-start text-left mb-3"
@@ -927,38 +1045,26 @@ export default function MaterialManager() {
           </Button>
           {/* Navigation */}
           <div className="flex items-center gap-2 mb-3 px-[4px]">
-            <button className="rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-              <FolderOpen className="w-4 h-4" />
-            </button>
+            <FolderOpen className="w-4 h-4" />
             <div className="flex-1 text-sm text-gray-600 dark:text-gray-400 truncate">
-              {currentPath || '~'}
+              {selectedFolder?.path || currentPath || '~'}
             </div>
             <button
-              onClick={() => loadFolder(currentPath)}
+              onClick={handleRefresh}
               className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
             >
               <RefreshCw
-                className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
+                className={`w-4 h-4 ${
+                  treeLoading || mediaLoading ? 'animate-spin' : ''
+                }`}
               />
             </button>
           </div>
-
-          {/* Search */}
-          {/* <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <input
-              type="text"
-              placeholder="搜索文件..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div> */}
         </div>
 
         {/* File Tree */}
         <div className="flex-1 overflow-y-auto p-2">
-          {loading && (
+          {treeLoading && items.length === 0 && (
             <div className="flex items-center justify-center py-8">
               <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
             </div>
@@ -970,7 +1076,7 @@ export default function MaterialManager() {
             </div>
           )}
 
-          {!loading && !error && (
+          {!error && (
             <div className="space-y-1">{renderFileTree(filteredItems)}</div>
           )}
         </div>
@@ -1008,6 +1114,12 @@ export default function MaterialManager() {
                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
                   {filteredMediaFiles.length}{' '}
                   {t('canvas:mediaFiles', 'media files')}
+                  {mediaLoading && (
+                    <span className="ml-2 inline-flex items-center gap-1">
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      {t('common:loading', 'Loading')}
+                    </span>
+                  )}
                 </p>
               )}
             </div>
@@ -1043,9 +1155,23 @@ export default function MaterialManager() {
         <div className="flex-1 overflow-y-auto p-6 w-full min-w-0">
           {selectedFolder ? (
             <div className="w-full overflow-hidden">
-              {filteredMediaFiles.length > 0 ? (
+              {mediaLoading && mediaFiles.length === 0 ? (
+                <div className="flex items-center justify-center h-64 text-gray-500">
+                  <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
+                </div>
+              ) : filteredMediaFiles.length > 0 ? (
                 <div>
                   {viewMode === 'grid' ? renderMediaGrid() : renderMediaList()}
+
+                  {visibleCount < filteredMediaFiles.length && (
+                    <div
+                      ref={loadMoreRef}
+                      className="flex items-center justify-center py-6 text-gray-400"
+                    >
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    </div>
+                  )}
+
                   {/* File Details Panel */}
                   {renderFileDetailsPanel()}
                 </div>

@@ -43,7 +43,7 @@ DEFAULT_PROVIDERS_CONFIG: AppConfig = {
     },
     'volces': {
         'models': {
-            'doubao-seedream-3-0-t2i-250415': {'type': 'image'},
+            # doubao-seedream-3-0-t2i-250415 已下线：该模型不支持 /api/plan/v3 套餐，调用会 404
             'doubao-seededit-3-0-250415': {'type': 'image'},
             'doubao-seedream-5-0-pro-260628': {'type': 'image'},
             'doubao-seedance-1-0-pro-250528': {'type': 'video'},

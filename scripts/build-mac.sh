@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# 本地一键打包 macOS (x64)：Python 后端 + React 前端 + Electron 安装包
+# 本地一键打包 macOS：Python 后端 + React 前端 + Electron 安装包
+# 用法:
+#   npm run build:mac:local
+#   BUMP=patch npm run build:mac:local   # 打包前自动递增版本号
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -10,9 +13,29 @@ if [ -x "$NODE22/node" ]; then
 fi
 echo "Node: $(node -v)"
 
+# 可选版本号递增
+if [ -n "${BUMP:-}" ]; then
+  npm version "$BUMP" --no-git-tag-version
+  echo "==> 版本号已递增为 $(node -p "require('./package.json').version")"
+fi
+VERSION=$(node -p "require('./package.json').version")
+echo "==> 当前版本: $VERSION"
+
 # 国内镜像加速 Electron / electron-builder 二进制下载
 export ELECTRON_MIRROR="${ELECTRON_MIRROR:-https://npmmirror.com/mirrors/electron/}"
 export ELECTRON_BUILDER_BINARIES_MIRROR="${ELECTRON_BUILDER_BINARIES_MIRROR:-https://npmmirror.com/mirrors/electron-builder-binaries/}"
+
+# 清理上一次的中间产物。某些受管环境会拦截批量删除，失败不中断本次构建。
+echo "==> 清理中间产物 (dist/mac*)"
+rm -rf dist/mac dist/mac-arm64 dist/mac.tmp 2>/dev/null || true
+
+# 归档同名安装包，避免覆盖上一次的产物
+if compgen -G "dist/Jaaz-$VERSION*.dmg" > /dev/null || compgen -G "dist/Jaaz-$VERSION*.zip" > /dev/null; then
+  ARCHIVE="dist/_archive/$VERSION-$(date +%Y%m%d%H%M%S)"
+  mkdir -p "$ARCHIVE"
+  mv dist/Jaaz-$VERSION* "$ARCHIVE"/ 2>/dev/null || true
+  echo "==> 旧产物已归档到 $ARCHIVE"
+fi
 
 if [ -x server/.venv/bin/pyinstaller ]; then
   echo "==> 构建 Python 后端"

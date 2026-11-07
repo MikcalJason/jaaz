@@ -71,6 +71,8 @@ export interface SessionToolCallResultEvent extends SessionBaseEvent {
 export interface SessionAllMessagesEvent extends SessionBaseEvent {
   type: SessionEventType.AllMessages
   messages: Message[]
+  /** 这批消息在完整历史中的起始位置；0 表示这是一次全量快照 */
+  replace_from?: number
 }
 export interface SessionToolCallProgressEvent extends SessionBaseEvent {
   type: SessionEventType.ToolCallProgress

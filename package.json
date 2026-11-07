@@ -16,6 +16,7 @@
     "build:mac": "electron-builder --mac",
     "build:mac:local": "bash scripts/build-mac.sh",
     "build:linux": "electron-builder --linux",
+    "clean:dist": "bash scripts/clean-dist.sh",
     "build:ts": "cd electron && tsc",
     "watch:ts": "cd electron && tsc --watch",
     "clean:ts": "cd electron && rm -rf dist",

@@ -106,11 +106,11 @@ async def get_image_info_and_save(
         if is_b64:
             image_data = await asyncio.to_thread(base64.b64decode, url)
         else:
-            # Fetch the image asynchronously
-            async with HttpClient.create_aiohttp() as session:
-                async with session.get(url) as response:
-                    # Read the image content as bytes
-                    image_data = await response.read()
+            # 复用共享连接池下载，批量生图时避免每张图都重新建连 + TLS 握手
+            session = await HttpClient.get_shared_aiohttp()
+            async with session.get(url) as response:
+                # Read the image content as bytes
+                image_data = await response.read()
 
         return await asyncio.to_thread(
             _decode_and_save_png, image_data, file_path_without_extension, metadata

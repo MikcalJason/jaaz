@@ -36,6 +36,7 @@ import ToolcallProgressUpdate from './ToolcallProgressUpdate'
 import ShareTemplateDialog from './ShareTemplateDialog'
 
 import { useConfigs } from '@/contexts/configs'
+import { useSocket } from '@/contexts/socket-context'
 import 'react-photo-view/dist/react-photo-view.css'
 import { DEFAULT_SYSTEM_PROMPT } from '@/constants'
 import { ModelInfo, ToolInfo } from '@/api/model'
@@ -65,6 +66,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const { authStatus } = useAuth()
   const [showShareDialog, setShowShareDialog] = useState(false)
   const queryClient = useQueryClient()
+  const { socketManager } = useSocket()
 
   useEffect(() => {
     if (sessionList.length > 0) {
@@ -85,10 +87,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     initCanvas ? 'text' : false
   )
   const mergedToolCallIds = useRef<string[]>([])
+  // 增量消息出现断档时用于拉取全量历史
+  const refreshMessagesRef = useRef<() => void>(() => {})
+  const resyncingRef = useRef(false)
 
   const sessionId = session?.id ?? searchSessionId
 
   const sessionIdRef = useRef<string>(session?.id || nanoid())
+
+  // 订阅当前会话，服务端只把该会话的流式事件推给本连接
+  useEffect(() => {
+    if (sessionId && socketManager) {
+      socketManager.joinSession(sessionId)
+    }
+  }, [sessionId, socketManager])
   const [expandingToolCalls, setExpandingToolCalls] = useState<string[]>([])
   const [pendingToolConfirmations, setPendingToolConfirmations] = useState<
     string[]
@@ -109,27 +121,37 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }, 200)
   }, [])
 
+  // 纯函数：不能就地修改入参，messages 里的对象可能被 immer 冻结
   const mergeToolCallResult = (messages: Message[]) => {
-    const messagesWithToolCallResult = messages.map((message, index) => {
-      if (message.role === 'assistant' && message.tool_calls) {
-        for (const toolCall of message.tool_calls) {
-          // From the next message, find the tool call result
-          for (let i = index + 1; i < messages.length; i++) {
-            const nextMessage = messages[i]
-            if (
-              nextMessage.role === 'tool' &&
-              nextMessage.tool_call_id === toolCall.id
-            ) {
-              toolCall.result = nextMessage.content
-              mergedToolCallIds.current.push(toolCall.id)
-            }
+    return messages.map((message, index) => {
+      if (message.role !== 'assistant' || !message.tool_calls) {
+        return message
+      }
+
+      let changed = false
+      const updatedToolCalls = message.tool_calls.map((toolCall) => {
+        let result = toolCall.result
+        // From the next message, find the tool call result
+        for (let i = index + 1; i < messages.length; i++) {
+          const nextMessage = messages[i]
+          if (
+            nextMessage.role === 'tool' &&
+            nextMessage.tool_call_id === toolCall.id
+          ) {
+            result = nextMessage.content as string
+            mergedToolCallIds.current.push(toolCall.id)
           }
         }
-      }
-      return message
-    })
 
-    return messagesWithToolCallResult
+        if (result === toolCall.result) {
+          return toolCall
+        }
+        changed = true
+        return { ...toolCall, result }
+      })
+
+      return changed ? { ...message, tool_calls: updatedToolCalls } : message
+    })
   }
 
   const handleDelta = useCallback(
@@ -409,11 +431,33 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         return
       }
 
-      setMessages(() => {
-        console.log('👇all_messages', data.messages)
-        return data.messages
+      const incoming = data.messages || []
+      const replaceFrom =
+        typeof data.replace_from === 'number' ? data.replace_from : 0
+
+      setMessages((prev) => {
+        // 全量快照
+        if (replaceFrom === 0) {
+          return mergeToolCallResult(incoming)
+        }
+
+        // 本地缺少前面的增量（例如断线重连），拉一次完整历史兜底
+        if (replaceFrom > prev.length) {
+          if (!resyncingRef.current) {
+            resyncingRef.current = true
+            void refreshMessagesRef.current()
+            setTimeout(() => {
+              resyncingRef.current = false
+            }, 1000)
+          }
+          return prev
+        }
+
+        return mergeToolCallResult([
+          ...prev.slice(0, replaceFrom),
+          ...incoming,
+        ])
       })
-      setMessages(mergeToolCallResult(data.messages))
       scrollToBottom()
     },
     [sessionId, scrollToBottom]
@@ -526,6 +570,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     scrollToBottom()
   }, [sessionId, scrollToBottom, setInitCanvas])
+
+  useEffect(() => {
+    refreshMessagesRef.current = initChat
+  }, [initChat])
 
   useEffect(() => {
     initChat()

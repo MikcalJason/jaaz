@@ -7,6 +7,9 @@ from services.langgraph_service.configs.image_vide_creator_config import ImageVi
 from .configs import PlannerAgentConfig, create_handoff_tool, BaseAgentConfig
 from services.tool_service import tool_service
 
+# 与 AgentManager.create_agents 返回的智能体顺序、名称必须保持一致
+AGENT_NAMES = ['planner', 'image_video_creator']
+
 
 class AgentManager:
     """智能体管理器 - 负责创建和管理所有智能体

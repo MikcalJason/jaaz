@@ -249,13 +249,17 @@ const startPythonApi = async () => {
   }
 
   // Determine the Python executable path (considering packaged app)
+  const fs = require('fs')
   const isWindows = process.platform === 'win32'
+  // 开发态优先使用项目虚拟环境里的解释器，
+  // 否则在只有 python3 的机器上 spawn('python') 会直接失败
+  const venvPython = isWindows
+    ? path.join(__dirname, '..', 'server', '.venv', 'Scripts', 'python.exe')
+    : path.join(__dirname, '..', 'server', '.venv', 'bin', 'python')
   const pythonExecutable = app.isPackaged
     ? path.join(process.resourcesPath, 'server', 'dist', 'main', isWindows ? 'main.exe' : 'main')
-    : 'python'
+    : (fs.existsSync(venvPython) ? venvPython : 'python')
   console.log('Resolved Python executable:', pythonExecutable)
-
-  const fs = require('fs')
 
   console.log('Exists?', fs.existsSync(pythonExecutable))
 

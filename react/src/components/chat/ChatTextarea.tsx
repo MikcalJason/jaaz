@@ -209,28 +209,17 @@ const ChatTextarea: React.FC<ChatTextareaProps> = ({
       text_content += `\n</input_images>`
     }
 
-    // Fetch images as base64
-    const imagePromises = images.map(async (image) => {
-      const response = await fetch(`/api/file/${image.file_id}`)
-      const blob = await response.blob()
-      return new Promise<string>((resolve) => {
-        const reader = new FileReader()
-        reader.onloadend = () => resolve(reader.result as string)
-        reader.readAsDataURL(blob)
-      })
-    })
-
-    const base64Images = await Promise.all(imagePromises)
-
+    // 只传文件引用，不内联 base64：
+    // base64 会随每条消息落库，并在之后每一轮对话中被整包重发一次
     const final_content = [
       {
         type: 'text',
         text: text_content as string,
       },
-      ...images.map((image, index) => ({
+      ...images.map((image) => ({
         type: 'image_url',
         image_url: {
-          url: base64Images[index],
+          url: `/api/file/${image.file_id}`,
         },
       })),
     ] as MessageContent[]

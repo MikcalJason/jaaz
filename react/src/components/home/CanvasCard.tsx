@@ -39,7 +39,8 @@ const CanvasCard: React.FC<CanvasCardProps> = ({
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.5, delay: index * 0.1 }}
+      // 延迟需要收敛：画布较多时 index * 0.1 会让最后几张等待好几秒才出现
+      transition={{ duration: 0.3, delay: Math.min(index, 8) * 0.04 }}
       className="border border-primary/20 rounded-xl cursor-pointer hover:border-primary/40 transition-all duration-300 hover:shadow-md hover:bg-primary/5 active:scale-99 relative group"
     >
       <CanvasDeleteDialog
@@ -64,6 +65,8 @@ const CanvasCard: React.FC<CanvasCardProps> = ({
           <img
             src={canvas.thumbnail}
             alt={canvas.name}
+            loading="lazy"
+            decoding="async"
             className="w-full h-40 object-cover rounded-lg"
           />
         ) : (

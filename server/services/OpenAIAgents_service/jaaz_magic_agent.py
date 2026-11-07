@@ -2,13 +2,49 @@
 
 from typing import Dict, Any, List
 import asyncio
+import base64
 import os
+from urllib.parse import unquote
 from nanoid import generate
 from tools.utils.image_canvas_utils import save_image_to_canvas
 from tools.utils.image_utils import get_image_info_and_save
 from services.config_service import FILES_DIR
 from common import DEFAULT_PORT
 from ..jaaz_service import JaazService
+
+
+def _resolve_image_content(url: str) -> str:
+    """把消息里的图片引用解析成可直接上传的 base64 data URL
+
+    前端现在只传 /api/file/<filename> 引用（不再内联 base64），
+    老数据里可能仍是内联的 data URL，直接透传。
+    """
+    if not url:
+        return ""
+
+    if url.startswith('data:'):
+        return url
+
+    filename = ""
+    if '/api/file/' in url:
+        filename = unquote(url.split('/api/file/', 1)[1].split('?')[0])
+    elif '://' not in url and '/' not in url:
+        filename = url
+
+    if not filename:
+        return url
+
+    path = os.path.join(FILES_DIR, filename)
+    if not os.path.exists(path):
+        print(f"⚠️ Magic input image not found: {path}")
+        return ""
+
+    with open(path, 'rb') as f:
+        data = f.read()
+
+    ext = os.path.splitext(filename)[1].lower().lstrip('.') or 'png'
+    mime = 'jpeg' if ext in ('jpg', 'jpeg') else ext
+    return f"data:image/{mime};base64,{base64.b64encode(data).decode('utf-8')}"
 
 
 async def create_jaaz_response(messages: List[Dict[str, Any]], session_id: str = "", canvas_id: str = "") -> Dict[str, Any]:
@@ -24,8 +60,10 @@ async def create_jaaz_response(messages: List[Dict[str, Any]], session_id: str =
         if isinstance(user_message.get('content'), list):
             for content_item in user_message['content']:
                 if content_item.get('type') == 'image_url':
-                    image_content = content_item.get(
-                        'image_url', {}).get('url', "")
+                    image_url = content_item.get('image_url', {}).get('url', "")
+                    # 读取本地文件可能较大，放到线程里避免阻塞事件循环
+                    image_content = await asyncio.to_thread(
+                        _resolve_image_content, image_url)
                     break
 
         if not image_content:

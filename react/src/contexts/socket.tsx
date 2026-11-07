@@ -1,20 +1,7 @@
 import { SocketIOManager } from '@/lib/socket'
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-
-interface SocketContextType {
-  connected: boolean
-  socketId?: string
-  connecting: boolean
-  error?: string
-  socketManager: SocketIOManager | null
-}
-
-const SocketContext = createContext<SocketContextType>({
-  connected: false,
-  connecting: false,
-  socketManager: null,
-})
+import { SocketContext } from './socket-context'
 
 interface SocketProviderProps {
   children: React.ReactNode

@@ -10,7 +10,11 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
-import { getFileServiceUrl, getFileInfoApi } from '@/api/settings'
+import {
+  getFileServiceUrl,
+  getFileThumbnailUrl,
+  getFileInfoApi,
+} from '@/api/settings'
 
 interface FileInfo {
   name: string
@@ -44,11 +48,15 @@ export default function FilePreviewModal({
   const [error, setError] = useState<string | null>(null)
   const [zoom, setZoom] = useState(1)
   const [showInfo, setShowInfo] = useState(false)
+  // 原图是否已经加载完成：未完成时先展示缩略图，避免大图等待期间一片空白
+  const [fullImageLoaded, setFullImageLoaded] = useState(false)
 
   useEffect(() => {
-    if (isOpen && filePath) {
-      loadFileInfo()
-    }
+    if (!isOpen || !filePath) return
+
+    setFullImageLoaded(false)
+    setError(null)
+    loadFileInfo()
   }, [isOpen, filePath])
 
   const loadFileInfo = async () => {
@@ -196,10 +204,10 @@ export default function FilePreviewModal({
         <div className="flex-1 flex overflow-hidden">
           {/* Main content */}
           <div className="flex-1 flex items-center justify-center p-4 overflow-auto">
+            {/* 文件信息接口在后台并行请求，不阻塞图片展示 */}
             {loading && (
-              <div className="text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                <p className="text-gray-500">加载中...</p>
+              <div className="absolute top-4 right-4">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
               </div>
             )}
 
@@ -209,20 +217,35 @@ export default function FilePreviewModal({
               </div>
             )}
 
-            {!loading && !error && fileType === 'image' && (
-              <img
-                src={getFileServiceUrl(filePath)}
-                alt={fileName}
-                className="max-w-full max-h-full object-contain transition-transform duration-200"
+            {!error && fileType === 'image' && (
+              // 先用缩略图秒开，原图加载完成后无闪烁替换
+              <div
+                className="relative flex items-center justify-center max-w-full max-h-full transition-transform duration-200"
                 style={{ transform: `scale(${zoom})` }}
-                onError={(e) => {
-                  console.error('Failed to load image:', e)
-                  setError('图片加载失败')
-                }}
-              />
+              >
+                <img
+                  src={getFileThumbnailUrl(filePath, 1024)}
+                  alt={fileName}
+                  decoding="async"
+                  className="max-w-full max-h-full object-contain"
+                />
+                <img
+                  src={getFileServiceUrl(filePath)}
+                  alt={fileName}
+                  decoding="async"
+                  className={`absolute inset-0 m-auto max-w-full max-h-full object-contain transition-opacity duration-200 ${
+                    fullImageLoaded ? 'opacity-100' : 'opacity-0'
+                  }`}
+                  onLoad={() => setFullImageLoaded(true)}
+                  onError={(e) => {
+                    console.error('Failed to load image:', e)
+                    // 原图失败时保留缩略图，不再报错
+                  }}
+                />
+              </div>
             )}
 
-            {!loading && !error && fileType === 'video' && (
+            {!error && fileType === 'video' && (
               <video
                 src={getFileServiceUrl(filePath)}
                 controls

@@ -1,6 +1,7 @@
 import os
 import sys
 import io
+import asyncio
 # Ensure stdout and stderr use utf-8 encoding to prevent emoji logs from crashing python server
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
@@ -24,6 +25,10 @@ print('Importing config_service')
 from services.config_service import config_service
 print('Importing tool_service')
 from services.tool_service import tool_service
+print('Importing http_client')
+from utils.http_client import HttpClient
+from tools.utils.image_generation_core import wait_for_background_generation
+from tools.video_generation.video_generation_core import wait_for_background_video_generation
 
 async def initialize():
     print('Initializing config_service')
@@ -41,6 +46,17 @@ async def lifespan(app: FastAPI):
     await tool_service.initialize()
     yield
     # onshutdown
+    # 取消后转到后台的生成请求已经发出并计费，给它们一点时间落盘再退出
+    try:
+        shutdown_wait = float(os.getenv("SHUTDOWN_GENERATION_WAIT", "10"))
+    except ValueError:
+        shutdown_wait = 10.0
+    if shutdown_wait > 0:
+        deadline = asyncio.get_running_loop().time() + shutdown_wait
+        await wait_for_background_generation(shutdown_wait)
+        remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+        await wait_for_background_video_generation(remaining)
+    await HttpClient.close_shared_aiohttp()
 
 print('Creating FastAPI app')
 app = FastAPI(lifespan=lifespan)

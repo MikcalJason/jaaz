@@ -77,7 +77,7 @@ const CanvasBatchImageButton = () => {
   const importFiles = useCallback(
     async (files: File[]) => {
       if (files.length === 0) {
-        toast.error(t('canvas:tool.batchImportNoImages'))
+        toast.error(t('canvas:tool.batchImportNoImages'), { duration: 1000 })
         return
       }
       if (!excalidrawAPI) return
@@ -178,21 +178,23 @@ const CanvasBatchImageButton = () => {
 
         if (failCount === 0 && successCount > 0) {
           toast.success(
-            t('canvas:tool.batchImportSuccess', { count: successCount })
+            t('canvas:tool.batchImportSuccess', { count: successCount }),
+            { duration: 1000 }
           )
         } else if (successCount > 0 && failCount > 0) {
           toast.error(
             t('canvas:tool.batchImportPartial', {
               success: successCount,
               fail: failCount,
-            })
+            }),
+            { duration: 1000 }
           )
         } else if (successCount === 0) {
-          toast.error(t('canvas:tool.batchImportFailed'))
+          toast.error(t('canvas:tool.batchImportFailed'), { duration: 1000 })
         }
       } catch (error) {
         console.error('Batch import error:', error)
-        toast.error(t('canvas:tool.batchImportFailed'))
+        toast.error(t('canvas:tool.batchImportFailed'), { duration: 1000 })
       } finally {
         setLoading(false)
         if (inputRef.current) inputRef.current.value = ''
@@ -214,7 +216,7 @@ const CanvasBatchImageButton = () => {
     try {
       const pickDirectories = window.electronAPI?.pickDirectories
       if (!pickDirectories) {
-        toast.error(t('canvas:tool.batchImportUnsupported'))
+        toast.error(t('canvas:tool.batchImportUnsupported'), { duration: 1000 })
         return
       }
 
@@ -231,7 +233,7 @@ const CanvasBatchImageButton = () => {
       const allPaths: string[] = pathLists.flat()
 
       if (allPaths.length === 0) {
-        toast.error(t('canvas:tool.batchImportNoImages'))
+        toast.error(t('canvas:tool.batchImportNoImages'), { duration: 1000 })
         return
       }
 
@@ -248,7 +250,7 @@ const CanvasBatchImageButton = () => {
       await importFiles(files)
     } catch (err) {
       console.error('Failed to import directories:', err)
-      toast.error(t('canvas:tool.batchImportFailed'))
+      toast.error(t('canvas:tool.batchImportFailed'), { duration: 1000 })
     } finally {
       setLoading(false)
     }
