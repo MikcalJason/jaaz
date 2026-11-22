@@ -31,7 +31,9 @@
     "compositeNoImageData": "未找到图片数据",
     "exportingPDF": "创建 PDF 中...",
     "exportingPDFProgress": "创建 PDF {{current}}/{{total}}...",
+    "exportingPDFSaving": "正在生成 PDF 文件，请稍候...",
     "exportPDFSuccess": "PDF 已导出",
+    "exportPDFPartial": "PDF 已导出，但有 {{count}} 页渲染失败",
     "exportPDFFailed": "导出 PDF 失败",
     "noImagesToExport": "画布上没有图片",
     "gptImagePermissionRequired": "您必须启用 gpt-image-1 模型权限才能使用此功能！"

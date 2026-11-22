@@ -12,6 +12,7 @@ import MultiChoicePrompt from '../MultiChoicePrompt'
 import SingleChoicePrompt from '../SingleChoicePrompt'
 import WritePlanToolCall from './WritePlanToolcall'
 import ToolCallContentV2 from './ToolCallContent'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 type ToolCallTagProps = {
@@ -34,6 +35,28 @@ const ToolCallTag: React.FC<ToolCallTagProps> = ({
   const { name, arguments: inputs } = toolCall.function
   const { t } = useTranslation()
 
+  // Arguments arrive token by token, so partial JSON is expected while
+  // streaming. Parse once per input change instead of on every render
+  // (which also avoided a `console.error` per delta).
+  const parsedArgs = useMemo<Record<string, unknown> | null>(() => {
+    if (!inputs) return null
+    try {
+      return JSON.parse(inputs) as Record<string, unknown>
+    } catch {
+      const cleanedInput = inputs.trim()
+      const jsonEndIndex = cleanedInput.lastIndexOf('}')
+      if (jsonEndIndex <= 0) return null
+      try {
+        return JSON.parse(cleanedInput.substring(0, jsonEndIndex + 1)) as Record<
+          string,
+          unknown
+        >
+      } catch {
+        return null
+      }
+    }
+  }, [inputs])
+
   if (name == 'prompt_user_multi_choice') {
     return <MultiChoicePrompt />
   }
@@ -48,25 +71,6 @@ const ToolCallTag: React.FC<ToolCallTagProps> = ({
   }
 
   const needsConfirmation = requiresConfirmation
-
-  let parsedArgs = null
-  try {
-    parsedArgs = JSON.parse(inputs)
-  } catch (error) {
-    console.error('Error parsing args:', error, 'Raw input:', inputs)
-    // 尝试清理输入字符串，移除可能的额外内容
-    try {
-      const cleanedInput = inputs.trim()
-      const jsonEndIndex = cleanedInput.lastIndexOf('}')
-      if (jsonEndIndex > 0) {
-        const jsonPart = cleanedInput.substring(0, jsonEndIndex + 1)
-        parsedArgs = JSON.parse(jsonPart)
-        console.log('Successfully parsed cleaned JSON:', jsonPart)
-      }
-    } catch (cleanError) {
-      console.error('Failed to parse even after cleaning:', cleanError)
-    }
-  }
 
   // 普通模式的样式
   return (

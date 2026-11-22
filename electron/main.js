@@ -399,20 +399,33 @@ if (!gotTheLock) {
     // Start Python API in both development and production
     const pyPort = await startPythonApi()
 
-    while (true) {
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      // wait for the server to start
-      let status = await fetch(`http://127.0.0.1:${pyPort}`)
-        .then((res) => {
-          return res.ok
-        })
+    // Bounded health check: previously this was an unbounded `while (true)`
+    // loop, so a backend that failed to start left the app with no window.
+    const MAX_ATTEMPTS = 240
+    let backendReady = false
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, attempt < 10 ? 300 : 1000)
+      )
+      backendReady = await fetch(`http://127.0.0.1:${pyPort}`)
+        .then((res) => res.ok)
         .catch((err) => {
-          console.error(err)
+          if (attempt === 0) {
+            console.warn('Backend not ready yet:', err.message)
+          }
           return false
         })
-      if (status) {
+      if (backendReady) {
         break
       }
+    }
+
+    if (!backendReady) {
+      console.error('Python backend did not become ready in time')
+      dialog.showErrorBox(
+        'Jaaz',
+        'The backend did not start in time. The window will open, but some features may be unavailable. Please restart the app.'
+      )
     }
 
     createWindow(pyPort)

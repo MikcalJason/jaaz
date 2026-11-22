@@ -26,15 +26,25 @@ declare module '@tanstack/react-router' {
   }
 }
 
-// 创建 IndexedDB 连接
-const getDB = () =>
-  openDB('react-query-db', 1, {
-    upgrade(db) {
-      if (!db.objectStoreNames.contains('cache')) {
-        db.createObjectStore('cache')
-      }
-    },
-  })
+// 创建 IndexedDB 连接（复用单例，避免每次读写都新建连接）
+let dbPromise: ReturnType<typeof openDB> | undefined
+const getDB = () => {
+  if (!dbPromise) {
+    dbPromise = openDB('react-query-db', 1, {
+      upgrade(db) {
+        if (!db.objectStoreNames.contains('cache')) {
+          db.createObjectStore('cache')
+        }
+      },
+    })
+    // Reset on failure so the next call can retry instead of reusing a
+    // permanently rejected promise.
+    dbPromise.catch(() => {
+      dbPromise = undefined
+    })
+  }
+  return dbPromise
+}
 
 // 创建 IndexedDB 持久化器
 const persister = createAsyncStoragePersister({

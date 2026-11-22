@@ -108,17 +108,31 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(false)
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const scrollToBottom = useCallback(() => {
     if (!isAtBottomRef.current) {
       return
     }
-    setTimeout(() => {
+    // Coalesce rapid stream updates into one scroll instead of stacking timers
+    if (scrollTimerRef.current) {
+      clearTimeout(scrollTimerRef.current)
+    }
+    scrollTimerRef.current = setTimeout(() => {
+      scrollTimerRef.current = null
       scrollRef.current?.scrollTo({
         top: scrollRef.current!.scrollHeight,
         behavior: 'smooth',
       })
     }, 200)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current)
+      }
+    }
   }, [])
 
   // 纯函数：不能就地修改入参，messages 里的对象可能被 immer 冻结
@@ -197,22 +211,22 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         return
       }
 
-      const existToolCall = messages.find(
-        (m) =>
-          m.role === 'assistant' &&
-          m.tool_calls &&
-          m.tool_calls.find((t) => t.id == data.id)
-      )
-
-      if (existToolCall) {
-        return
-      }
-
-      setMessages(
-        produce((prev) => {
-          console.log('👇tool_call event get', data)
-          setPending('tool')
-          prev.push({
+      console.log('👇tool_call event get', data)
+      setPending('tool')
+      // Check against the latest state inside the updater: `messages` from the
+      // closure can be stale while tool events stream in.
+      setMessages((prev) => {
+        if (
+          prev.some(
+            (m) =>
+              m.role === 'assistant' &&
+              m.tool_calls?.some((t) => t.id === data.id)
+          )
+        ) {
+          return prev
+        }
+        return produce(prev, (draft) => {
+          draft.push({
             role: 'assistant',
             content: '',
             tool_calls: [
@@ -227,12 +241,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             ],
           })
         })
-      )
+      })
 
-      setExpandingToolCalls(
-        produce((prev) => {
-          prev.push(data.id)
-        })
+      setExpandingToolCalls((prev) =>
+        prev.includes(data.id) ? prev : [...prev, data.id]
       )
     },
     [sessionId]
@@ -244,22 +256,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         return
       }
 
-      const existToolCall = messages.find(
-        (m) =>
-          m.role === 'assistant' &&
-          m.tool_calls &&
-          m.tool_calls.find((t) => t.id == data.id)
-      )
-
-      if (existToolCall) {
-        return
-      }
-
-      setMessages(
-        produce((prev) => {
-          console.log('👇tool_call_pending_confirmation event get', data)
-          setPending('tool')
-          prev.push({
+      console.log('👇tool_call_pending_confirmation event get', data)
+      setPending('tool')
+      setMessages((prev) => {
+        if (
+          prev.some(
+            (m) =>
+              m.role === 'assistant' &&
+              m.tool_calls?.some((t) => t.id === data.id)
+          )
+        ) {
+          return prev
+        }
+        return produce(prev, (draft) => {
+          draft.push({
             role: 'assistant',
             content: '',
             tool_calls: [
@@ -274,21 +284,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             ],
           })
         })
-      )
+      })
 
-      setPendingToolConfirmations(
-        produce((prev) => {
-          prev.push(data.id)
-        })
+      setPendingToolConfirmations((prev) =>
+        prev.includes(data.id) ? prev : [...prev, data.id]
       )
 
       // 自动展开需要确认的工具调用
-      setExpandingToolCalls(
-        produce((prev) => {
-          if (!prev.includes(data.id)) {
-            prev.push(data.id)
-          }
-        })
+      setExpandingToolCalls((prev) =>
+        prev.includes(data.id) ? prev : [...prev, data.id]
       )
     },
     [sessionId]
@@ -496,6 +500,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     })
   }, [])
 
+  // Scroll listener is bound once; the handlers below are re-bound only when
+  // their identity changes (session switch etc.) instead of on every render.
   useEffect(() => {
     const handleScroll = () => {
       if (scrollRef.current) {
@@ -505,8 +511,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       }
     }
     const scrollEl = scrollRef.current
-    scrollEl?.addEventListener('scroll', handleScroll)
+    scrollEl?.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      scrollEl?.removeEventListener('scroll', handleScroll)
+    }
+  }, [])
 
+  useEffect(() => {
     eventBus.on('Socket::Session::Delta', handleDelta)
     eventBus.on('Socket::Session::ToolCall', handleToolCall)
     eventBus.on(
@@ -523,8 +534,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     eventBus.on('Socket::Session::Error', handleError)
     eventBus.on('Socket::Session::Info', handleInfo)
     return () => {
-      scrollEl?.removeEventListener('scroll', handleScroll)
-
       eventBus.off('Socket::Session::Delta', handleDelta)
       eventBus.off('Socket::Session::ToolCall', handleToolCall)
       eventBus.off(
@@ -550,7 +559,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       eventBus.off('Socket::Session::Error', handleError)
       eventBus.off('Socket::Session::Info', handleInfo)
     }
-  })
+  }, [
+    handleDelta,
+    handleToolCall,
+    handleToolCallPendingConfirmation,
+    handleToolCallConfirmed,
+    handleToolCallCancelled,
+    handleToolCallArguments,
+    handleToolCallResult,
+    handleImageGenerated,
+    handleAllMessages,
+    handleDone,
+    handleError,
+    handleInfo,
+  ])
 
   const initChat = useCallback(async () => {
     if (!sessionId) {

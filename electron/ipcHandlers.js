@@ -1,5 +1,6 @@
 // ipcHandlers.js
-const { chromium, BrowserContext } = require('playwright')
+// playwright is only needed when publishing to social platforms, so it is
+// required lazily — loading it on startup costs hundreds of ms to seconds.
 const path = require('path')
 const { app, BrowserWindow, shell } = require('electron')
 const fs = require('fs')
@@ -358,10 +359,11 @@ module.exports = {
 }
 
 const userDataDir = app.getPath('userData')
-/** @type {BrowserContext | null} */
+/** @type {import('playwright').BrowserContext | null} */
 let browser
 
 async function launchBrowser() {
+  const { chromium } = require('playwright')
   const context = await chromium.launchPersistentContext(
     path.join(userDataDir, 'browser_data'),
     {

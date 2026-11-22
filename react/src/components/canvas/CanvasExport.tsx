@@ -24,6 +24,124 @@ const PDF_QUALITIES: PDFQuality[] = [
   { label: 'JPEG 0.85', mime: 'image/jpeg', quality: 0.85 },
 ]
 
+// Per-page render caps. Rendering every page at the original image resolution
+// blows up canvas + jsPDF memory on large canvases (blank PDF pages / white tab).
+const MAX_RENDER_DIM = 2400
+const MAX_RENDER_PIXELS = 4_000_000
+// A single unreachable/corrupt data URL must never freeze the whole export.
+const IMAGE_LOAD_TIMEOUT_MS = 20_000
+// PNG pages above this base64 size are re-encoded as JPEG to keep memory sane.
+const MAX_PNG_DATAURL_LENGTH = 6_000_000
+
+/**
+ * File-name comparator: numbers compare by value ("2.png" < "10.png") and
+ * Chinese compares by pinyin (阿 < 波 < 陈) instead of code point.
+ */
+const NAME_COLLATOR = (() => {
+  const options: Intl.CollatorOptions = { numeric: true, sensitivity: 'base' }
+  try {
+    return new Intl.Collator('zh-Hans-CN-u-co-pinyin', options)
+  } catch {
+    return new Intl.Collator('zh-CN', options)
+  }
+})()
+
+const stripExtension = (name: string) => name.replace(/\.[^./\\]+$/, '')
+
+/** Best-effort file name for an image element (batch import / linked file). */
+const getImageFileName = (el: ExcalidrawImageElement): string => {
+  const customName = (el.customData as Record<string, unknown> | undefined)?.fileName
+  if (typeof customName === 'string' && customName.trim()) return customName.trim()
+
+  const link = (el as unknown as { link?: string | null }).link
+  if (link) {
+    const segment = link.split(/[?#]/)[0].split('/').filter(Boolean).pop()
+    if (segment) {
+      try {
+        return decodeURIComponent(segment)
+      } catch {
+        return segment
+      }
+    }
+  }
+  return ''
+}
+
+const CN_DIGITS: Record<string, number> = {
+  零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4,
+  五: 5, 六: 6, 七: 7, 八: 8, 九: 9,
+}
+const CN_UNITS: Record<string, number> = {
+  十: 10, 百: 100, 千: 1000, 万: 10_000, 亿: 100_000_000,
+}
+const CN_NUMERAL_CHARS = [...Object.keys(CN_DIGITS), ...Object.keys(CN_UNITS)].join('')
+
+/** 一 / 十 / 二十三 / 一百零五 / 一万 → number; null when the text is not a numeral. */
+const parseChineseNumber = (text: string): number | null => {
+  let total = 0
+  let section = 0
+  let digit = 0
+  let seen = false
+
+  for (const ch of text) {
+    const d = CN_DIGITS[ch]
+    if (d !== undefined) { digit = d; seen = true; continue }
+
+    const unit = CN_UNITS[ch]
+    if (unit === undefined) return null
+    seen = true
+
+    if (unit >= 100_000_000) {
+      total = (total + section + digit) * unit
+      section = 0
+    } else if (unit >= 10_000) {
+      section = (section + digit) * unit
+      total += section
+      section = 0
+    } else {
+      section += (digit || 1) * unit
+    }
+    digit = 0
+  }
+
+  return seen ? total + section + digit : null
+}
+
+const SORT_SPLIT_RE = new RegExp(`(\\d+|[${CN_NUMERAL_CHARS}]+)`, 'g')
+
+/** Split a file name into text / number chunks, so 十 and 10 both compare as 10. */
+const tokenizeFileName = (name: string): string[] => {
+  if (!name) return []
+  return stripExtension(name)
+    .split(SORT_SPLIT_RE)
+    .filter((part) => part.length > 0)
+}
+
+const tokenToNumber = (token: string): number | null => {
+  if (/^\d+$/.test(token)) {
+    const value = Number(token)
+    return Number.isFinite(value) ? value : null
+  }
+  return parseChineseNumber(token)
+}
+
+/** Compare tokenized names: numeric chunks by value (10 > 2, 十 = 10), text by pinyin. */
+const compareNameTokens = (a: string[], b: string[]): number => {
+  const len = Math.min(a.length, b.length)
+  for (let i = 0; i < len; i++) {
+    const numA = tokenToNumber(a[i])
+    const numB = tokenToNumber(b[i])
+    if (numA !== null && numB !== null) {
+      if (numA !== numB) return numA < numB ? -1 : 1
+      continue
+    }
+    const byText = NAME_COLLATOR.compare(a[i], b[i])
+    if (byText !== 0) return byText
+    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1
+  }
+  return a.length - b.length
+}
+
 const CanvasExport = () => {
   const { excalidrawAPI } = useCanvas()
   const { t } = useTranslation()
@@ -179,7 +297,29 @@ const CanvasExport = () => {
     })
   }
 
-  /** Render a base image + overlays onto an offscreen canvas at original resolution */
+  /**
+   * Load an image with a hard timeout: a corrupt/unreachable dataURL resolves to
+   * null instead of leaving the await pending forever (which "freezes" the export).
+   */
+  const loadImage = (src: string, timeoutMs = IMAGE_LOAD_TIMEOUT_MS): Promise<HTMLImageElement | null> =>
+    new Promise((resolve) => {
+      const img = new Image()
+      let settled = false
+      const finish = (result: HTMLImageElement | null) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        img.onload = null
+        img.onerror = null
+        resolve(result)
+      }
+      const timer = setTimeout(() => finish(null), timeoutMs)
+      img.onload = () => finish(img.naturalWidth && img.naturalHeight ? img : null)
+      img.onerror = () => finish(null)
+      img.src = src
+    })
+
+  /** Render a base image + overlays onto an offscreen canvas, capped to a safe resolution */
   const renderCompositeImage = async (
     base: ExcalidrawImageElement,
     overlays: { id: string; type: string; x: number; y: number; width: number; height: number; fileId?: string; fontSize?: number; strokeColor?: string; text?: string; angle?: number }[],
@@ -190,26 +330,38 @@ const CanvasExport = () => {
     if (!base.width || !base.height) return null
 
     // Load base image
-    const img = new Image(); img.src = file.dataURL
-    await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = () => reject() }).catch(() => null)
-    if (!img.naturalWidth) return null
+    const img = await loadImage(file.dataURL)
+    if (!img) return null
 
     const origW = img.naturalWidth, origH = img.naturalHeight
-    const scale = origW / base.width
+    if (!origW || !origH) return null
+
+    // Cap the render resolution so many pages don't exhaust canvas/jsPDF memory.
+    let renderScale = 1
+    const maxDim = Math.max(origW, origH)
+    if (maxDim > MAX_RENDER_DIM) renderScale = MAX_RENDER_DIM / maxDim
+    const scaledPixels = origW * origH * renderScale * renderScale
+    if (scaledPixels > MAX_RENDER_PIXELS) {
+      renderScale *= Math.sqrt(MAX_RENDER_PIXELS / scaledPixels)
+    }
+    const renderW = Math.max(1, Math.round(origW * renderScale))
+    const renderH = Math.max(1, Math.round(origH * renderScale))
+    const scale = renderW / base.width
 
     const canvas = document.createElement('canvas')
-    canvas.width = origW; canvas.height = origH
+    canvas.width = renderW; canvas.height = renderH
     const ctx = canvas.getContext('2d')
-    if (!ctx) return null
+    if (!ctx) { canvas.width = 0; canvas.height = 0; return null }
 
-    ctx.drawImage(img, 0, 0, origW, origH)
+    ctx.drawImage(img, 0, 0, renderW, renderH)
 
     for (const el of overlays) {
       const rx = (el.x - base.x) * scale, ry = (el.y - base.y) * scale
       if (el.type === 'image' && el.fileId) {
         const of = files[el.fileId]; if (!of?.dataURL) continue
-        const oi = new Image(); oi.src = of.dataURL
-        await new Promise<void>((resolve) => { oi.onload = () => resolve() })
+        const oi = await loadImage(of.dataURL)
+        // Skip a broken overlay rather than blocking the whole page.
+        if (!oi) continue
         ctx.drawImage(oi, rx, ry, el.width * scale, el.height * scale)
       } else if (el.type === 'text' && el.fontSize) {
         ctx.save()
@@ -294,11 +446,36 @@ const CanvasExport = () => {
         }
         if (!isOverlay) { groups.push({ base: img, overlays: [] }); processed.add(img.id) }
       }
-      // Sort groups by file name (if available), fall back to fileId
+      // Sort groups by extracted file name: numbers (2/十/二十三) by value,
+      // Chinese by pinyin. Images without a name keep their creation order.
+      const sortKeys = new Map<string, { name: string; tokens: string[]; created: number }>()
+      for (const g of groups) {
+        const name = getImageFileName(g.base)
+        sortKeys.set(g.base.id, {
+          name,
+          tokens: tokenizeFileName(name),
+          created: g.base.fileId ? files[g.base.fileId]?.created ?? 0 : 0,
+        })
+      }
+      const fileNameOf = (el: ExcalidrawImageElement) => sortKeys.get(el.id)?.name ?? ''
+
       groups.sort((a, b) => {
-        const nameA = (a.base as any).customData?.fileName || a.base.fileId || ''
-        const nameB = (b.base as any).customData?.fileName || b.base.fileId || ''
-        return nameA.localeCompare(nameB)
+        const keyA = sortKeys.get(a.base.id)!
+        const keyB = sortKeys.get(b.base.id)!
+        const hasA = keyA.name.length > 0
+        const hasB = keyB.name.length > 0
+
+        if (hasA && hasB) {
+          const byTokens = compareNameTokens(keyA.tokens, keyB.tokens)
+          if (byTokens !== 0) return byTokens
+          const byFull = NAME_COLLATOR.compare(keyA.name, keyB.name)
+          if (byFull !== 0) return byFull
+        } else if (hasA !== hasB) {
+          return hasA ? -1 : 1
+        }
+
+        if (keyA.created !== keyB.created) return keyA.created - keyB.created
+        return String(a.base.fileId ?? '').localeCompare(String(b.base.fileId ?? ''))
       })
 
       // Create PDF
@@ -309,9 +486,12 @@ const CanvasExport = () => {
       const total = groups.length
 
       // Process one group at a time to keep memory low
+      let pagesAdded = 0
+      const failedPages: string[] = []
+
       for (let i = 0; i < total; i++) {
         const { base, overlays } = groups[i]
-        if (i > 0) pdf.addPage()
+        const label = fileNameOf(base) || base.fileId || `#${i + 1}`
 
         // Show progress
         toast.loading(t('canvas:messages.exportingPDFProgress', { current: i + 1, total }), { id: toastId })
@@ -321,22 +501,62 @@ const CanvasExport = () => {
           ...getOverlappingElements(base, elements as any, new Set()),
         ].filter((el, idx, arr) => arr.findIndex(e => e.id === el.id) === idx)
 
-        const canvas = await renderCompositeImage(base, allOverlays as any, files)
-        if (!canvas) continue
+        let canvas: HTMLCanvasElement | null = null
+        try {
+          canvas = await renderCompositeImage(base, allOverlays as any, files)
+          if (!canvas) { failedPages.push(String(label)); continue }
 
-        // Convert to chosen format (PNG or JPEG)
-        const dataUrl = canvas.toDataURL(pdfQuality.mime, pdfQuality.quality)
+          const ratio = canvas.width / canvas.height
 
-        // Scale to fit page
-        const ratio = canvas.width / canvas.height
-        let dw = pageW - margin * 2, dh = dw / ratio
-        if (dh > pageH - margin * 2) { dh = pageH - margin * 2; dw = dh * ratio }
-        pdf.addImage(dataUrl, pdfQuality.mime === 'image/png' ? 'PNG' : 'JPEG',
-          margin + (pageW - margin * 2 - dw) / 2, margin + (pageH - margin * 2 - dh) / 2, dw, dh)
+          // Convert to chosen format (PNG or JPEG). An empty/oversized PNG result
+          // is re-encoded as JPEG, otherwise jsPDF ends up with a blank page.
+          let dataUrl = canvas.toDataURL(pdfQuality.mime, pdfQuality.quality)
+          let format: 'PNG' | 'JPEG' = pdfQuality.mime === 'image/png' ? 'PNG' : 'JPEG'
+          if (
+            format === 'PNG' &&
+            (!dataUrl || dataUrl.length < 100 || dataUrl.length > MAX_PNG_DATAURL_LENGTH)
+          ) {
+            dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+            format = 'JPEG'
+          }
+          if (!dataUrl || dataUrl.length < 100) throw new Error(`Empty image data for ${label}`)
+
+          // Scale to fit page
+          let dw = pageW - margin * 2, dh = dw / ratio
+          if (dh > pageH - margin * 2) { dh = pageH - margin * 2; dw = dh * ratio }
+
+          // Only add a page once we actually have an image (avoid blank pages)
+          if (pagesAdded > 0) pdf.addPage()
+          pdf.addImage(dataUrl, format,
+            margin + (pageW - margin * 2 - dw) / 2, margin + (pageH - margin * 2 - dh) / 2, dw, dh)
+          pagesAdded++
+        } catch (pageError) {
+          console.error(`PDF page failed (${label}):`, pageError)
+          failedPages.push(String(label))
+        } finally {
+          // Release the backing store immediately so peak memory stays flat
+          if (canvas) { canvas.width = 0; canvas.height = 0 }
+        }
+
+        // Yield to the event loop so the UI keeps painting (no white screen)
+        await new Promise((resolve) => setTimeout(resolve, 0))
       }
 
+      if (pagesAdded === 0) throw new Error('No page could be rendered')
+
+      toast.loading(t('canvas:messages.exportingPDFSaving'), { id: toastId })
+      // Yield once more before the synchronous jsPDF serialization
+      await new Promise((resolve) => setTimeout(resolve, 0))
       pdf.save(`export-${new Date().toISOString().slice(0, 10)}.pdf`)
-      toast.success(t('canvas:messages.exportPDFSuccess'), { id: toastId, duration: 4000 })
+
+      if (failedPages.length > 0) {
+        toast.warning(
+          t('canvas:messages.exportPDFPartial', { count: failedPages.length }),
+          { id: toastId, duration: 5000 }
+        )
+      } else {
+        toast.success(t('canvas:messages.exportPDFSuccess'), { id: toastId, duration: 4000 })
+      }
     } catch (error) {
       console.error('PDF export error:', error)
       toast.error(t('canvas:messages.exportPDFFailed'), { id: toastId, duration: 4000 })

@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { useCanvas } from '@/contexts/canvas'
+import { useCanvasFileIdLookup } from '@/hooks/use-canvas-file-lookup'
 import { useTranslation } from 'react-i18next'
 import { PhotoView } from 'react-photo-view'
 
@@ -14,20 +15,14 @@ type MessageImageProps = {
 
 const MessageImage = ({ content }: MessageImageProps) => {
   const { excalidrawAPI } = useCanvas()
-  const files = excalidrawAPI?.getFiles()
-  const filesArray = Object.keys(files || {}).map((key) => ({
-    id: key,
-    url: files![key].dataURL,
-  }))
+  const findFileId = useCanvasFileIdLookup()
 
   const { t } = useTranslation()
 
   const handleImagePositioning = (id: string) => {
     excalidrawAPI?.scrollToContent(id, { animate: true })
   }
-  const id = filesArray.find((file) =>
-    content.image_url.url?.includes(file.url)
-  )?.id
+  const id = findFileId(content.image_url.url)
 
   return (
     <div className="w-full max-w-[140px]">

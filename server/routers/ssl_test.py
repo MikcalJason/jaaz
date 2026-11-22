@@ -188,9 +188,11 @@ async def test_ssl_configuration():
     # Test 5: Basic httpx connectivity test
     if httpx_ok:
         try:
-            with HttpClient.create_sync() as client:
+            # Async client: a blocking request here would freeze the whole
+            # event loop (this server also serves HTTP + WebSocket).
+            async with HttpClient.create() as client:
                 # Test basic HTTPS connection first
-                response = client.get('https://httpbin.org/get', timeout=10)
+                response = await client.get('https://httpbin.org/get', timeout=10)
                 success = response.status_code == 200
                 log_result(
                     "httpx HTTPS Test",
@@ -207,9 +209,9 @@ async def test_ssl_configuration():
     # Test 6: OpenAI API connectivity using httpx (for ChatOpenAI)
     if httpx_ok:
         try:
-            with HttpClient.create_sync() as client:
+            async with HttpClient.create() as client:
                 # Test OpenAI API endpoint (just check SSL connection, not actual API call)
-                response = client.get('https://api.openai.com', timeout=15)
+                response = await client.get('https://api.openai.com', timeout=15)
                 # Accept more status codes as successful SSL connection
                 # 421 = Misdirected Request (HTTP/2 issue, but SSL worked)
                 # 200 = OK, 401 = Unauthorized, 403 = Forbidden, 404 = Not Found

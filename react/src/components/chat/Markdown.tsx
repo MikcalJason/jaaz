@@ -6,6 +6,7 @@ import ReactMarkdown, { Components } from 'react-markdown'
 import { PhotoView } from 'react-photo-view'
 import remarkGfm from 'remark-gfm'
 import TextFoldTag from './Message/TextFoldTag'
+import { useCanvasFileIdLookup } from '@/hooks/use-canvas-file-lookup'
 
 type MarkdownProps = {
   children: string
@@ -13,11 +14,7 @@ type MarkdownProps = {
 
 const NonMemoizedMarkdown: React.FC<MarkdownProps> = ({ children }) => {
   const { excalidrawAPI } = useCanvas()
-  const files = excalidrawAPI?.getFiles()
-  const filesArray = Object.keys(files || {}).map((key) => ({
-    id: key,
-    url: files![key].dataURL,
-  }))
+  const findFileId = useCanvasFileIdLookup()
 
   const { t } = useTranslation()
   const [isThinkExpanded, setIsThinkExpanded] = useState(false)
@@ -63,11 +60,6 @@ const NonMemoizedMarkdown: React.FC<MarkdownProps> = ({ children }) => {
     if (parts.length === 0 && fixedContent.trim()) {
       parts.push({ type: 'normal', content: fixedContent.trim() })
     }
-
-    console.log('Think tags processing:', {
-      parts,
-      originalContent: children.substring(0, 100),
-    })
 
     return { parts, hasUnclosed: openTags > closeTags }
   }
@@ -208,7 +200,7 @@ const NonMemoizedMarkdown: React.FC<MarkdownProps> = ({ children }) => {
       )
     },
     img: ({ node, children, ...props }) => {
-      const id = filesArray.find((file) => props.src?.includes(file.url))?.id
+      const id = findFileId(props.src)
 
       // 检查alt文本是否包含video_id标识，这表示这是一个视频文件
       const isVideo = props.alt && props.alt.includes('video_id:')
@@ -267,7 +259,7 @@ const NonMemoizedMarkdown: React.FC<MarkdownProps> = ({ children }) => {
       )
     },
     video: ({ node, children, ...props }) => {
-      const id = filesArray.find((file) => props.src?.includes(file.url))?.id
+      const id = findFileId(props.src)
       return (
         <span className="group block relative overflow-hidden rounded-md my-2 last:mb-4">
           <video
